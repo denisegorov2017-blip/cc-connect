@@ -1,6 +1,6 @@
 # Проверка MAX ↔ Codex на Windows
 
-Рабочая ветка `codex/max-403-windows` основана на `v1.5.0` (`17c61062`). Исправление upstream #1848 перенесено коммитом `c7ba3c76`. На 16 ноября установлен `cc-connect-0df1c787.exe`, собранный из чистого архива коммита `0df1c7870bde081de7a5363caa1ca6885c1de23d`, SHA-256 `F24D6E1D305A4E4EB9D0247E4F71955A2B4ADD4A34E1DD55D1E961FA8E9FDCBA`. Функции зафиксированы в `dc12364c`, русский перевод отдельно в `0df1c787`. Публикации на GitHub не было. Ниже — актуальная сводка; первоначальная матрица и журнал этапов сохранены как история проверки.
+Рабочая ветка `codex/max-403-windows` основана на `v1.5.0` (`17c61062`). Исправление upstream #1848 перенесено коммитом `c7ba3c76`. На 16 ноября установлен `cc-connect-a2e25aa7.exe`, собранный из чистого архива коммита `a2e25aa7acd9d1ef1ab4b26eca101fd96c31a94e`, SHA-256 `17D20A38133429E480BABA0463A3B7738645F300756B677103A56A1CE8D151D4`. Функции зафиксированы в `dc12364c`, русский перевод отдельно в `0df1c787`, настройки Windows task — в `a2e25aa7`. Native Task Scheduler владеет запуском; актуальный PID запрашивается из Windows, а не берётся из старого manifest. Публикации на GitHub не было. Ниже — актуальная сводка; первоначальная матрица и журнал этапов сохранены как история проверки.
 
 | Возможность | Подтверждено в живом MAX | Остаток / ограничение |
 |---|---|---|
@@ -19,7 +19,7 @@
 | MCP / уточнения | Протокол и обработчики есть | MCP inventory timeout 35 с; live-инструмент и `requestUserInput` не подтверждены |
 | Голос | По исходникам есть приём audio и STT pipeline | В конфигурации STT выключен; голосовой сценарий NOT_TESTED |
 | Расписания / восстановление | Таймер пережил рестарт, восстановил thread в Beta; MAX показал один `TIMER-RECOVERY-OK` с terra / medium | Проверен будущий one-shot; cron и перезапуск после пропущенного срока отдельно не проверены |
-| Запуск Windows / rollback | Native Task Scheduler установлен, один bridge; Hermes MAX выключен; живой откат v1.5.0 проверен | Обнаружены стандартные 72 ч / battery stops; исправление native owner проходит установку; logout/login не выполнялся |
+| Запуск Windows / rollback | Native Task Scheduler: at-logon, PT0S, battery разрешена, IgnoreNew; crash recovery и ответ MAX подтверждены; живой откат v1.5.0 проверен | Logout/login не выполнялся; native stop может оставлять child, нужен persisted-state/process readback при обслуживании |
 | Локальные gates | Проверенный staged snapshot: core 43,243 с, Codex 18,102 с, MAX 9,680 с, CLI 0,602 с; русский перевод + CUJ 3,871 с и vet прошли | Полный Windows gate не пройден; пользователь явно разрешил только локальные коммиты с этим исключением |
 
 ### Таймер и восстановление, 16 ноября 01:45–01:48
@@ -75,6 +75,15 @@
 - Live readback обнаружил `ExecutionTimeLimit=PT72H`, `DisallowStartIfOnBatteries=true`, `StopIfGoingOnBatteries=true`. Это значения Windows по умолчанию, а не подходящий бессрочный daemon contract. Официальные Microsoft docs: [New-ScheduledTaskSettingsSet](https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/new-scheduledtasksettingsset?view=windowsserver2025-ps), [ExecutionTimeLimit](https://learn.microsoft.com/en-us/windows/win32/taskschd/tasksettings-executiontimelimit).
 - Исправлен единственный native owner `createWindowsTask`: передаёт Settings с TimeSpan.Zero, разрешённой батареей и IgnoreNew. Новый regression `TestWindowsTaskCreate_AvoidsDaemonTimeAndBatteryStops` сначала воспроизвёл отсутствие настроек, после fix прошёл. Связанные Windows renderer/action/principal tests прошли за 1,023 с, vet daemon без замечаний.
 - Создание объекта Settings без регистрации независимо вернуло PT0S, false/false, IgnoreNew. Реальная переустановка и проверка crash recovery выполняются следующим шагом; эти настройки ещё не объявлены применёнными к работающей задаче.
+
+### Применение настроек и crash recovery, 16 ноября 02:16–02:19
+
+- Сборка `a2e25aa7` имеет `--version` с полным commit и SHA-256 из заголовка. Native `daemon install --force` применил новый exe и Settings. Секретосодержащий прежний script сохранён только в закрытой `%USERPROFILE%/.cc-connect/rollback-before-a2e25aa7`, а не в candidate с дополнительными sandbox ACL.
+- Важный обнаруженный дефект native stop: Stop-ScheduledTask завершил старый wrapper PID 43268, но оставил child bridge PID 37264. Новый task PID 41548 не смог занять тот же lock; второго работающего poller не было. Перед продолжением независимо подтверждены отсутствие старого parent, точные exe/parent ID оставшегося child и idle. Остановлен только этот проверенный orphan; новый bridge PID 14900 стартовал из штатного loop. Нельзя считать статус Ready у task доказательством остановки child.
+- Live settings после переустановки: `ExecutionTimeLimit=PT0S`, `DisallowStartIfOnBatteries=false`, `StopIfGoingOnBatteries=false`, `MultipleInstances=IgnoreNew`. Task Running, principal Interactive/Limited. Реальный выход из Windows, перезагрузка ПК и переход на батарею не выполнялись; проверены зарегистрированные настройки и запуск текущей task instance.
+- Crash test: после проверки idle принудительно остановлен только новый bridge PID 14900 в `02:17:55.962`. Тот же wrapper 41548 восстановил PID 8060. MAX connected `02:18:06.422` — около 10,46 с; polling подтвердил единственный bridge через 12,045 с. Доказательство вне source: `candidate/crash-recovery-a2e25aa7.json` и `candidate/daemon.log`.
+- Проверка после recovery: MAX ingress `02:19:23.034`, native PID 26440, resume прежнего thread в Beta; complete `02:19:42.682`, tools=0. В MAX визуально подтверждён `DAEMON-RECOVERY-OK` с terra / medium / Project Beta. История и настройки сохранились.
+- Deployment launcher проверяет владельца Task Scheduler до ручного запуска; фактическая попытка была отклонена до создания нового процесса. `installed-current.json` теперь описывает owner/exe/hash/commit/config/log, без быстро устаревающего PID. Для ручного обслуживания: сначала штатный daemon stop, затем проверка фактических exe/parent/creation time и завершение только подтверждённого оставшегося child; лишь после отсутствия poller допустим start/rollback. Полноценный атомарный stop/restart native daemon не заявляется.
 
 ## Первоначальная матрица (15 ноября, историческая)
 
