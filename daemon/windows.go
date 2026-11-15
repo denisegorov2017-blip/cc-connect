@@ -152,7 +152,8 @@ func createWindowsTask(scriptPath string) error {
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument %s
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
-Register-ScheduledTask -TaskName %s -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName %s -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 `, powerShellLiteral(windowsTaskActionArgs(scriptPath)), powerShellLiteral(windowsTaskName)))
 	if err != nil {
 		return fmt.Errorf("register scheduled task: %s (%w)", out, err)

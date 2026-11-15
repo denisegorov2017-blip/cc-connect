@@ -19,7 +19,7 @@
 | MCP / уточнения | Протокол и обработчики есть | MCP inventory timeout 35 с; live-инструмент и `requestUserInput` не подтверждены |
 | Голос | По исходникам есть приём audio и STT pipeline | В конфигурации STT выключен; голосовой сценарий NOT_TESTED |
 | Расписания / восстановление | Таймер пережил рестарт, восстановил thread в Beta; MAX показал один `TIMER-RECOVERY-OK` с terra / medium | Проверен будущий one-shot; cron и перезапуск после пропущенного срока отдельно не проверены |
-| Запуск Windows / rollback | Единственный кандидат; Hermes MAX выключен; проверены ответ прежней v1.5.0 и возврат текущей сборки | Автозапуск не установлен; проверен откат комплекта exe/config/state, не совместимость новых state со старым exe |
+| Запуск Windows / rollback | Native Task Scheduler установлен, один bridge; Hermes MAX выключен; живой откат v1.5.0 проверен | Обнаружены стандартные 72 ч / battery stops; исправление native owner проходит установку; logout/login не выполнялся |
 | Локальные gates | Проверенный staged snapshot: core 43,243 с, Codex 18,102 с, MAX 9,680 с, CLI 0,602 с; русский перевод + CUJ 3,871 с и vet прошли | Полный Windows gate не пройден; пользователь явно разрешил только локальные коммиты с этим исключением |
 
 ### Таймер и восстановление, 16 ноября 01:45–01:48
@@ -66,6 +66,15 @@
 - Живой smoke: ingress `02:08:57.909`, native PID 10244, resume прежнего thread `01a1e148-493a-73f3-8a86-3578053cf11a`, Project Beta; complete `02:09:13.113`, tools=0. В MAX визуально подтверждены точный `COMMIT-0DF1C787-OK` и footer `gpt-6.1-terra`, `effort:medium`, Project Beta. Время до complete — около 15,2 с; отдельный ACK доставки этим не измерен.
 - Собственные временные `test_ws_*.json` перенесены из source root в designated `test-residue-before-0df1c787` вне репозитория. Прежний неизвестный `core/test_ws_9aec6385.json` сохранён на месте, исключён из коммитов. Отслеживаемых незакоммиченных изменений перед обновлением этого отчёта нет.
 - Native `doctor` исполнен на установленном кандидате и вернул `doctor command is not supported on Windows`; полноценную doctor-диагностику на Windows не заявляем. Автозапуск и раздельные live-замеры доставки остаются открытыми.
+
+### Native автозапуск и настройки Task Scheduler, 16 ноября 02:12
+
+- После проверки idle остановлен только PID 14504. Единственный config переименован из `max-candidate.toml` в `config.toml`, поскольку native daemon игнорирует basename переданного `--config` и запускает executable без аргументов в WorkDir. Резервные config, launcher и прежний daemon metadata `/tmp` сохранены в candidate/rollback; launcher теперь использует штатное имя.
+- Исполнен native `cc-connect-0df1c787.exe daemon install --work-dir <candidate> --log-file <candidate/daemon.log> --log-max-size 10`. Task `cc-connect` создан и запущен: at-logon D_909, Interactive/Limited, hidden PowerShell, один bridge PID 37264, bot connected. Это работающий зарегистрированный task, но реального logout/login не было.
+- Скрипт `%USERPROFILE%/.cc-connect/cc-connect-daemon.ps1` захватил только CC_LOG*, PATH и три placeholders конфигурации: MAX token, user ID, native Codex path. Значения не печатались. ACL скрипта и папки проверены: SYSTEM, Administrators и текущий пользователь; дополнительных sandbox SID в них нет. Сам токен отсутствует в Git. Нового внешнего secret store или scheduler не создано.
+- Live readback обнаружил `ExecutionTimeLimit=PT72H`, `DisallowStartIfOnBatteries=true`, `StopIfGoingOnBatteries=true`. Это значения Windows по умолчанию, а не подходящий бессрочный daemon contract. Официальные Microsoft docs: [New-ScheduledTaskSettingsSet](https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/new-scheduledtasksettingsset?view=windowsserver2025-ps), [ExecutionTimeLimit](https://learn.microsoft.com/en-us/windows/win32/taskschd/tasksettings-executiontimelimit).
+- Исправлен единственный native owner `createWindowsTask`: передаёт Settings с TimeSpan.Zero, разрешённой батареей и IgnoreNew. Новый regression `TestWindowsTaskCreate_AvoidsDaemonTimeAndBatteryStops` сначала воспроизвёл отсутствие настроек, после fix прошёл. Связанные Windows renderer/action/principal tests прошли за 1,023 с, vet daemon без замечаний.
+- Создание объекта Settings без регистрации независимо вернуло PT0S, false/false, IgnoreNew. Реальная переустановка и проверка crash recovery выполняются следующим шагом; эти настройки ещё не объявлены применёнными к работающей задаче.
 
 ## Первоначальная матрица (15 ноября, историческая)
 
