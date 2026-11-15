@@ -178,6 +178,10 @@ type appServerSession struct {
 
 	stateMu      sync.Mutex
 	pendingMsgs  []string
+	streaming    bool
+	cliBin       string
+	cliExtraArgs []string
+	streamedText map[string]string
 	currentTurn  string
 	preambleSent bool
 
@@ -191,7 +195,7 @@ const (
 	appServerUsageRefreshTimeout = 1500 * time.Millisecond
 )
 
-func newAppServerSession(ctx context.Context, url, workDir, model, effort, mode, resumeID, baseURL, modelProvider string, extraEnv []string, codexHome string, systemPrompt string, appendPrompt string) (*appServerSession, error) {
+func newAppServerSession(ctx context.Context, url, workDir, model, effort, mode, resumeID, baseURL, modelProvider string, extraEnv []string, codexHome string, systemPrompt string, appendPrompt string, streaming bool, cliBin string, cliExtraArgs []string) (*appServerSession, error) {
 	sessionCtx, cancel := context.WithCancel(ctx)
 	s := &appServerSession{
 		url:              url,
@@ -210,6 +214,9 @@ func newAppServerSession(ctx context.Context, url, workDir, model, effort, mode,
 		pending:          make(map[int64]chan rpcResponseEnvelope),
 		pendingApprovals: make(map[string]chan core.PermissionResult),
 		preambleSent:     resumeID != "" && resumeID != core.ContinueSession,
+		streaming:        streaming,
+		cliBin:           cliBin,
+		cliExtraArgs:     append([]string(nil), cliExtraArgs...),
 	}
 	s.alive.Store(true)
 
@@ -235,7 +242,7 @@ func newAppServerSession(ctx context.Context, url, workDir, model, effort, mode,
 }
 
 func (s *appServerSession) connect() error {
-	args := []string{"app-server"}
+	args := append(append([]string(nil), s.cliExtraArgs...), "app-server")
 	if strings.TrimSpace(s.url) != "" {
 		args = append(args, "--listen", strings.TrimSpace(s.url))
 	}
@@ -251,7 +258,11 @@ func (s *appServerSession) connect() error {
 	if baseURL := strings.TrimSpace(s.baseURL); baseURL != "" {
 		args = append(args, "-c", fmt.Sprintf("openai_base_url=%q", baseURL))
 	}
-	cmd := exec.CommandContext(s.ctx, "codex", args...)
+	cliBin := s.cliBin
+	if cliBin == "" {
+		cliBin = "codex"
+	}
+	cmd := exec.CommandContext(s.ctx, cliBin, args...)
 	cmd.Dir = s.workDir
 	env := append([]string(nil), s.extraEnv...)
 	if s.codexHome != "" {
@@ -302,7 +313,6 @@ func (s *appServerSession) initialize() error {
 			"experimentalApi": true,
 			"optOutNotificationMethods": []string{
 				"command/exec/outputDelta",
-				"item/agentMessage/delta",
 				"item/plan/delta",
 				"item/fileChange/outputDelta",
 				"item/reasoning/summaryTextDelta",
@@ -1100,6 +1110,12 @@ func (s *appServerSession) handleResponse(resp rpcResponseEnvelope) {
 }
 
 func (s *appServerSession) handleNotification(method string, paramsRaw json.RawMessage) {
+	var scope struct {
+		ThreadID string `json:"threadId"`
+	}
+	if json.Unmarshal(paramsRaw, &scope) == nil && scope.ThreadID != "" && s.CurrentSessionID() != "" && scope.ThreadID != s.CurrentSessionID() {
+		return
+	}
 	switch method {
 	case "turn/started":
 		var notif turnNotification
@@ -1107,9 +1123,34 @@ func (s *appServerSession) handleNotification(method string, paramsRaw json.RawM
 			s.stateMu.Lock()
 			s.currentTurn = notif.Turn.ID
 			s.pendingMsgs = s.pendingMsgs[:0]
+			s.streamedText = make(map[string]string)
 			s.stateMu.Unlock()
 			s.storeContextUsage(nil)
 		}
+
+	case "item/agentMessage/delta":
+		if !s.streaming {
+			return
+		}
+		var notif struct {
+			ItemID string `json:"itemId"`
+			TurnID string `json:"turnId"`
+			Delta  string `json:"delta"`
+		}
+		if json.Unmarshal(paramsRaw, &notif) != nil || notif.ItemID == "" || notif.Delta == "" {
+			return
+		}
+		s.stateMu.Lock()
+		if s.currentTurn == "" || notif.TurnID != s.currentTurn {
+			s.stateMu.Unlock()
+			return
+		}
+		if s.streamedText == nil {
+			s.streamedText = make(map[string]string)
+		}
+		s.streamedText[notif.ItemID] += notif.Delta
+		s.stateMu.Unlock()
+		s.emit(core.Event{Type: core.EventText, Content: notif.Delta})
 
 	case "item/started":
 		var notif itemNotification
@@ -1120,12 +1161,27 @@ func (s *appServerSession) handleNotification(method string, paramsRaw json.RawM
 	case "item/completed":
 		var notif itemNotification
 		if err := json.Unmarshal(paramsRaw, &notif); err == nil {
+			s.stateMu.Lock()
+			stale := notif.TurnID != "" && notif.TurnID != s.currentTurn
+			s.stateMu.Unlock()
+			if stale {
+				return
+			}
 			s.handleItemCompleted(notif.Item)
 		}
 
 	case "turn/completed":
 		var notif turnNotification
 		if err := json.Unmarshal(paramsRaw, &notif); err == nil {
+			s.stateMu.Lock()
+			stale := notif.Turn.ID != "" && notif.Turn.ID != s.currentTurn
+			s.stateMu.Unlock()
+			if stale {
+				return
+			}
+			if notif.Turn.Error != nil {
+				s.emitError(fmt.Errorf("codex: turn failed: %s", notif.Turn.Error.Message))
+			}
 			s.completeTurn()
 		}
 
@@ -1136,7 +1192,7 @@ func (s *appServerSession) handleNotification(method string, paramsRaw json.RawM
 				Type string `json:"type"`
 			} `json:"status"`
 		}
-		if err := json.Unmarshal(paramsRaw, &notif); err == nil && notif.Status.Type == "idle" {
+		if err := json.Unmarshal(paramsRaw, &notif); err == nil && notif.Status.Type == "idle" && !s.streaming {
 			// In codex 0.125+, thread going idle signals turn completion.
 			s.completeTurn()
 		}
@@ -1213,7 +1269,29 @@ func (s *appServerSession) handleItemCompleted(item map[string]any) {
 
 	case "agentMessage":
 		text, _ := item["text"].(string)
+		id, _ := item["id"].(string)
+		s.stateMu.Lock()
+		streamed, streamedAlready := s.streamedText[id]
+		if s.streaming && id != "" {
+			if s.streamedText == nil {
+				s.streamedText = make(map[string]string)
+			}
+			s.streamedText[id] = text
+		}
+		s.stateMu.Unlock()
+		if streamedAlready {
+			if !strings.HasPrefix(text, streamed) {
+				s.emitError(fmt.Errorf("codex: completed text differs from streamed text"))
+			} else if suffix := strings.TrimPrefix(text, streamed); suffix != "" {
+				s.emit(core.Event{Type: core.EventText, Content: suffix})
+			}
+			return
+		}
 		if strings.TrimSpace(text) != "" {
+			if s.streaming {
+				s.emit(core.Event{Type: core.EventText, Content: text})
+				return
+			}
 			s.stateMu.Lock()
 			s.pendingMsgs = append(s.pendingMsgs, text)
 			s.stateMu.Unlock()
@@ -1547,6 +1625,13 @@ func (s *appServerSession) flushPendingAsText() {
 }
 
 func (s *appServerSession) emit(event core.Event) {
+	if s.streaming {
+		select {
+		case s.events <- event:
+		case <-s.ctx.Done():
+		}
+		return
+	}
 	select {
 	case s.events <- event:
 	default:

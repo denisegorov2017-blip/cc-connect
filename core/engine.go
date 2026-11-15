@@ -6303,6 +6303,7 @@ var builtinCommands = []struct {
 	{[]string{"stop"}, "stop"},
 	{[]string{"cancel"}, "cancel"},
 	{[]string{"help"}, "help"},
+	{[]string{"start"}, "start"},
 	{[]string{"version"}, "version"},
 	{[]string{"commands", "command", "cmd"}, "commands"},
 	{[]string{"skills", "skill"}, "skills"},
@@ -6760,7 +6761,7 @@ func (e *Engine) handleWorkspaceCommand(p Platform, msg *Message, args []string)
 			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgWsBindUsage))
 			return
 		}
-		bindWorkspace(projectKey, args[1], MsgWsBindSuccess)
+		bindWorkspace(projectKey, strings.Join(args[1:], " "), MsgWsBindSuccess)
 
 	case "route":
 		if len(args) < 2 {
@@ -6841,6 +6842,7 @@ func (e *Engine) handleWorkspaceCommand(p Platform, msg *Message, args []string)
 
 	case "list":
 		listBindings(projectKey, MsgWsListEmpty, MsgWsListTitle)
+		e.replyWorkspaceChoices(p, msg, args[1:])
 
 	default:
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgWsUsage))
@@ -6857,12 +6859,6 @@ func (e *Engine) cmdNew(p Platform, msg *Message, args []string) {
 	slog.Info("cmdNew: cleaning up old session", "session_key", msg.SessionKey)
 	e.cleanupInteractiveState(interactiveKey)
 	slog.Info("cmdNew: cleanup done, creating new session", "session_key", msg.SessionKey)
-
-	// Clear old session's agent session ID so it cannot be resumed
-	old := sessions.GetOrCreateActive(msg.SessionKey)
-	old.SetAgentSessionID("", "")
-	old.ClearHistory()
-	sessions.Save()
 
 	name := ""
 	if len(args) > 0 {
@@ -6923,7 +6919,7 @@ func (e *Engine) cmdList(p Platform, msg *Message, args []string) {
 		}
 		agentSessions = e.applySessionFilter(agentSessions, sessions)
 		if len(agentSessions) == 0 {
-			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgListEmpty))
+			e.replyWithButtons(p, msg.ReplyCtx, e.i18n.T(MsgListEmpty), e.sessionMenuButtons())
 			return
 		}
 
@@ -6956,6 +6952,7 @@ func (e *Engine) cmdList(p Platform, msg *Message, args []string) {
 		} else {
 			sb.WriteString(fmt.Sprintf(e.i18n.T(MsgListTitle), agentName, total))
 		}
+		var buttons [][]ButtonOption
 		for i := start; i < end; i++ {
 			s := agentSessions[i]
 			marker := "◻"
@@ -6977,12 +6974,23 @@ func (e *Engine) cmdList(p Platform, msg *Message, args []string) {
 			}
 			sb.WriteString(fmt.Sprintf("%s **%d.** %s · **%d** msgs · %s\n",
 				marker, i+1, displayName, s.MessageCount, s.ModifiedAt.Format("01-02 15:04")))
+			buttons = append(buttons, []ButtonOption{{Text: marker + " " + displayName, Data: "cmd:/switch " + s.ID}})
 		}
 		if totalPages > 1 {
 			sb.WriteString(fmt.Sprintf(e.i18n.T(MsgListPageHint), page, totalPages))
 		}
 		sb.WriteString(e.i18n.T(MsgListSwitchHint))
-		e.reply(p, msg.ReplyCtx, sb.String())
+		var navigation []ButtonOption
+		if page > 1 {
+			navigation = append(navigation, ButtonOption{Text: "←", Data: fmt.Sprintf("cmd:/list %d", page-1)})
+		}
+		if page < totalPages {
+			navigation = append(navigation, ButtonOption{Text: "→", Data: fmt.Sprintf("cmd:/list %d", page+1)})
+		}
+		if len(navigation) > 0 {
+			buttons = append(buttons, navigation)
+		}
+		e.replyWithButtons(p, msg.ReplyCtx, sb.String(), append(buttons, e.sessionMenuButtons()...))
 		return
 	}
 
@@ -9155,6 +9163,7 @@ func (e *Engine) cmdLang(p Platform, msg *Message, args []string) {
 				{Text: "Español", Data: "cmd:/lang es"},
 				{Text: "Auto", Data: "cmd:/lang auto"},
 			},
+			{{Text: "Русский", Data: "cmd:/lang ru"}},
 		}
 		if supportsCards(p) {
 			e.replyWithCard(p, msg.ReplyCtx, e.renderLangCard())
@@ -9172,6 +9181,7 @@ func (e *Engine) cmdLang(p Platform, msg *Message, args []string) {
 		sb.WriteString("- 繁體中文: `/lang zh-TW`\n")
 		sb.WriteString("- 日本語: `/lang ja`\n")
 		sb.WriteString("- Español: `/lang es`\n")
+		sb.WriteString("- Русский: `/lang ru`\n")
 		sb.WriteString("- Auto: `/lang auto`")
 		e.reply(p, msg.ReplyCtx, sb.String())
 		return
@@ -9190,6 +9200,8 @@ func (e *Engine) cmdLang(p Platform, msg *Message, args []string) {
 		lang = LangJapanese
 	case "es", "spanish", "español":
 		lang = LangSpanish
+	case "ru", "russian", "русский":
+		lang = LangRussian
 	case "auto":
 		lang = LangAuto
 	default:
@@ -9214,6 +9226,8 @@ func langDisplayName(lang Language) string {
 		return "日本語"
 	case LangSpanish:
 		return "Español"
+	case LangRussian:
+		return "Русский"
 	default:
 		return "Auto"
 	}
@@ -9221,7 +9235,7 @@ func langDisplayName(lang Language) string {
 
 func (e *Engine) cmdHelp(p Platform, msg *Message) {
 	if !supportsCards(p) {
-		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgHelp))
+		e.replyWithButtons(p, msg.ReplyCtx, e.i18n.T(MsgHelp), e.sessionMenuButtons())
 		return
 	}
 	e.replyWithCard(p, msg.ReplyCtx, e.renderHelpCard())
@@ -9244,7 +9258,63 @@ func (e *Engine) cmdStart(p Platform, msg *Message) {
 	if name == "" {
 		name = e.agent.Name()
 	}
-	e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgWelcome), name))
+	e.replyWithButtons(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgWelcome), name), e.sessionMenuButtons())
+}
+
+func (e *Engine) sessionMenuButtons() [][]ButtonOption {
+	buttons := [][]ButtonOption{
+		{{Text: e.i18n.T(MsgMenuNew), Data: "cmd:/new"}, {Text: e.i18n.T(MsgMenuSessions), Data: "cmd:/list"}},
+		{{Text: e.i18n.T(MsgMenuModel), Data: "cmd:/model"}, {Text: e.i18n.T(MsgMenuReasoning), Data: "cmd:/reasoning"}},
+		{{Text: e.i18n.T(MsgCardTitleStatus), Data: "cmd:/status"}, {Text: e.i18n.T(MsgBuiltinCmdStop), Data: "cmd:/stop"}},
+	}
+	if e.multiWorkspace {
+		buttons = append(buttons, []ButtonOption{{Text: e.i18n.T(MsgMenuProjects), Data: "cmd:/workspace list"}})
+	}
+	return buttons
+}
+
+func (e *Engine) replyWorkspaceChoices(p Platform, msg *Message, args []string) {
+	entries, err := os.ReadDir(e.baseDir)
+	if err != nil {
+		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgWsResolutionError, err))
+		return
+	}
+	var projects [][]ButtonOption
+	for _, entry := range entries {
+		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+			projects = append(projects, []ButtonOption{{Text: entry.Name(), Data: "cmd:/workspace bind " + entry.Name()}})
+		}
+	}
+	if len(projects) == 0 {
+		return
+	}
+	pages := (len(projects) + listPageSize - 1) / listPageSize
+	page := 1
+	if len(args) > 0 {
+		if n, err := strconv.Atoi(args[0]); err == nil && n > 0 {
+			page = n
+		}
+	}
+	if page > pages {
+		page = pages
+	}
+	start := (page - 1) * listPageSize
+	end := start + listPageSize
+	if end > len(projects) {
+		end = len(projects)
+	}
+	buttons := append([][]ButtonOption(nil), projects[start:end]...)
+	var navigation []ButtonOption
+	if page > 1 {
+		navigation = append(navigation, ButtonOption{Text: "←", Data: fmt.Sprintf("cmd:/workspace list %d", page-1)})
+	}
+	if page < pages {
+		navigation = append(navigation, ButtonOption{Text: "→", Data: fmt.Sprintf("cmd:/workspace list %d", page+1)})
+	}
+	if len(navigation) > 0 {
+		buttons = append(buttons, navigation)
+	}
+	e.replyWithButtons(p, msg.ReplyCtx, e.i18n.T(MsgMenuProjects), buttons)
 }
 
 const defaultHelpGroup = "session"
@@ -9563,6 +9633,7 @@ func (e *Engine) cmdModel(p Platform, msg *Message, args []string) {
 			}
 			sb.WriteString("\n")
 			sb.WriteString(e.i18n.T(MsgModelListTitle))
+			_, inlineChoices := p.(InlineButtonSender)
 			var buttons [][]ButtonOption
 			var row []ButtonOption
 			for i, m := range models {
@@ -9580,7 +9651,9 @@ func (e *Engine) cmdModel(p Platform, msg *Message, args []string) {
 					}
 					line = fmt.Sprintf("%s%d. %s%s\n", marker, i+1, m.Name, desc)
 				}
-				sb.WriteString(line)
+				if !inlineChoices {
+					sb.WriteString(line)
+				}
 
 				label := m.Name
 				if m.Alias != "" {
@@ -9589,7 +9662,7 @@ func (e *Engine) cmdModel(p Platform, msg *Message, args []string) {
 				if m.Name == current {
 					label = "▶ " + label
 				}
-				row = append(row, ButtonOption{Text: label, Data: fmt.Sprintf("cmd:/model switch %d", i+1)})
+				row = append(row, ButtonOption{Text: label, Data: "cmd:/model switch " + m.Name})
 				if len(row) >= 3 {
 					buttons = append(buttons, row)
 					row = nil
@@ -9771,7 +9844,7 @@ func (e *Engine) cmdReasoning(p Platform, msg *Message, args []string) {
 			if current == "" {
 				sb.WriteString(e.i18n.T(MsgReasoningDefault))
 			} else {
-				sb.WriteString(e.i18n.Tf(MsgReasoningCurrent, current))
+				sb.WriteString(e.i18n.Tf(MsgReasoningCurrent, e.i18n.reasoningEffortLabel(current)))
 				sb.WriteString("\n")
 			}
 			sb.WriteString("\n")
@@ -9783,13 +9856,13 @@ func (e *Engine) cmdReasoning(p Platform, msg *Message, args []string) {
 				if effort == current {
 					marker = "> "
 				}
-				sb.WriteString(fmt.Sprintf("%s%d. %s\n", marker, i+1, effort))
+				sb.WriteString(fmt.Sprintf("%s%d. %s\n", marker, i+1, e.i18n.reasoningEffortLabel(effort)))
 
-				label := effort
+				label := e.i18n.reasoningEffortLabel(effort)
 				if effort == current {
 					label = "▶ " + label
 				}
-				row = append(row, ButtonOption{Text: label, Data: fmt.Sprintf("cmd:/reasoning %d", i+1)})
+				row = append(row, ButtonOption{Text: label, Data: "cmd:/reasoning " + effort})
 				if len(row) >= 3 {
 					buttons = append(buttons, row)
 					row = nil
@@ -9828,12 +9901,8 @@ func (e *Engine) cmdReasoning(p Platform, msg *Message, args []string) {
 	switcher.SetReasoningEffort(target)
 	e.cleanupInteractiveState(e.interactiveKeyForSessionKey(msg.SessionKey))
 
-	s := sessions.GetOrCreateActive(msg.SessionKey)
-	s.SetAgentSessionID("", "")
-	s.ClearHistory()
 	sessions.Save()
-
-	e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgReasoningChanged, target))
+	e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgReasoningChanged, e.i18n.reasoningEffortLabel(target)))
 }
 
 func (e *Engine) cmdMode(p Platform, msg *Message, args []string) {
@@ -12159,6 +12228,8 @@ func (e *Engine) executeCardAction(cmd, args, sessionKey string) {
 			lang = LangJapanese
 		case "es", "spanish":
 			lang = LangSpanish
+		case "ru", "russian", "русский":
+			lang = LangRussian
 		case "auto":
 			lang = LangAuto
 		default:
@@ -12826,7 +12897,7 @@ func (e *Engine) renderLangCard() *Card {
 
 	langs := []struct{ code, label string }{
 		{"en", "English"}, {"zh", "中文"}, {"zh-TW", "繁體中文"},
-		{"ja", "日本語"}, {"es", "Español"}, {"auto", "Auto"},
+		{"ja", "日本語"}, {"es", "Español"}, {"ru", "Русский"}, {"auto", "Auto"},
 	}
 	var opts []CardSelectOption
 	initVal := ""
@@ -12931,14 +13002,14 @@ func (e *Engine) renderReasoningCard() *Card {
 	if current == "" {
 		sb.WriteString(e.i18n.T(MsgReasoningDefault))
 	} else {
-		sb.WriteString(e.i18n.Tf(MsgReasoningCurrent, current))
+		sb.WriteString(e.i18n.Tf(MsgReasoningCurrent, e.i18n.reasoningEffortLabel(current)))
 	}
 
 	var opts []CardSelectOption
 	initVal := ""
 	for i, effort := range efforts {
 		val := fmt.Sprintf("act:/reasoning %d", i+1)
-		opts = append(opts, CardSelectOption{Text: effort, Value: val})
+		opts = append(opts, CardSelectOption{Text: e.i18n.reasoningEffortLabel(effort), Value: val})
 		if effort == current {
 			initVal = val
 		}

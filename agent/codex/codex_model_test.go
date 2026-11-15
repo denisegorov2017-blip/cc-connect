@@ -1,10 +1,33 @@
 package codex
 
 import (
+	"os"
+	"reflect"
 	"testing"
 
 	"github.com/chenhg5/cc-connect/core"
 )
+
+func TestWorkspaceAgentOptions_PreservesConfiguredCLICommand(t *testing.T) {
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{cmd: bin, cliExtraArgs: []string{"-c", `profile="workspace test"`}, backend: "app_server", appServerURL: "stdio://", streaming: true}
+	options := a.WorkspaceAgentOptions()
+	cloned, err := New(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := cloned.(*Agent)
+	if b.cmd != a.cmd || !reflect.DeepEqual(b.cliExtraArgs, a.cliExtraArgs) || !b.streaming {
+		t.Fatalf("workspace changed CLI identity: command=%q args=%q streaming=%v", b.cmd, b.cliExtraArgs, b.streaming)
+	}
+	options["cmd"].([]string)[1] = "changed"
+	if a.cliExtraArgs[0] != "-c" {
+		t.Fatal("workspace options share mutable CLI arguments with original agent")
+	}
+}
 
 func TestConfiguredModels_BoundaryConditions(t *testing.T) {
 	a := &Agent{

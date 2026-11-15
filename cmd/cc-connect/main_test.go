@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"flag"
-	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -299,13 +297,14 @@ func TestStartInitialRefresh_AfterProjectStateOverride(t *testing.T) {
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stderr
-	r, w, err := os.Pipe()
+	w, err := os.CreateTemp(t.TempDir(), "stderr-*")
 	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
+		t.Fatalf("create stderr file: %v", err)
 	}
 	os.Stderr = w
 	defer func() {
 		os.Stderr = old
+		_ = w.Close()
 	}()
 
 	fn()
@@ -313,14 +312,11 @@ func captureStderr(t *testing.T, fn func()) string {
 	if err := w.Close(); err != nil {
 		t.Fatalf("close writer: %v", err)
 	}
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, r); err != nil {
-		t.Fatalf("copy stderr: %v", err)
+	out, err := os.ReadFile(w.Name())
+	if err != nil {
+		t.Fatalf("read stderr: %v", err)
 	}
-	if err := r.Close(); err != nil {
-		t.Fatalf("close reader: %v", err)
-	}
-	return buf.String()
+	return string(out)
 }
 
 func TestPrintUsage_ListsCronExecCommand(t *testing.T) {

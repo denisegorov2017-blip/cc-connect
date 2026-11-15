@@ -84,7 +84,7 @@ func TestCallbackReusesLearnedChatID(t *testing.T) {
 
 	p.handleCallback(context.Background(), &maxCallback{
 		CallbackID: "cb.1",
-		Payload:    "perm:allow_all",
+		Payload:    "cb_play",
 		User:       maxUser{UserID: userID, Name: "Tester"},
 		Message:    maxMessage{Body: maxBody{Mid: "mid.2"}}, // recipient.chat_id = 0
 	})
@@ -142,9 +142,16 @@ func TestCallbackTranslatesPermissionPayloads(t *testing.T) {
 		var got *core.Message
 		p.handler = func(_ core.Platform, m *core.Message) { got = m }
 
+		payload := tc.payload
+		if tc.perm {
+			p.buttonMenus = map[string]buttonMenu{"test": {
+				reply: replyContext{userID: "999001"}, messageID: "", actions: []string{tc.payload}, expires: time.Now().Add(time.Minute),
+			}}
+			payload = "ui:test:0"
+		}
 		p.handleCallback(context.Background(), &maxCallback{
 			CallbackID: "cb." + tc.payload,
-			Payload:    tc.payload,
+			Payload:    payload,
 			User:       maxUser{UserID: 999001, Name: "Tester"},
 			Message:    maxMessage{Body: maxBody{Mid: ""}}, // no mid → no card edit attempt
 		})

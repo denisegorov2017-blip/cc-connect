@@ -15,6 +15,7 @@ const (
 	LangTraditionalChinese Language = "zh-TW"
 	LangJapanese           Language = "ja"
 	LangSpanish            Language = "es"
+	LangRussian            Language = "ru"
 )
 
 // I18n provides internationalized messages.
@@ -29,6 +30,26 @@ type I18n struct {
 	lang     Language
 	detected Language
 	saveFunc func(Language) error
+}
+
+// ParseLanguage resolves the configured locale, defaulting to auto-detection.
+func ParseLanguage(value string) Language {
+	switch value {
+	case "zh", "chinese":
+		return LangChinese
+	case "zh-TW", "zh_TW", "zhtw":
+		return LangTraditionalChinese
+	case "ja", "japanese":
+		return LangJapanese
+	case "es", "spanish":
+		return LangSpanish
+	case "ru", "russian":
+		return LangRussian
+	case "en", "english":
+		return LangEnglish
+	default:
+		return LangAuto
+	}
 }
 
 func NewI18n(lang Language) *I18n {
@@ -54,6 +75,11 @@ func DetectLanguage(text string) Language {
 	}
 	if isSpanishHint(text) {
 		return LangSpanish
+	}
+	for _, r := range text {
+		if (r >= 'А' && r <= 'я') || r == 'Ё' || r == 'ё' {
+			return LangRussian
+		}
 	}
 	return LangEnglish
 }
@@ -378,31 +404,31 @@ const (
 	MsgCronIDLabel               MsgKey = "cron_id_label"
 	MsgCronFailedSuffix          MsgKey = "cron_failed_suffix"
 
-	MsgTimerNotAvailable  MsgKey = "timer_not_available"
-	MsgTimerUsage         MsgKey = "timer_usage"
-	MsgTimerAddUsage      MsgKey = "timer_add_usage"
-	MsgTimerAdded         MsgKey = "timer_added"
-	MsgTimerAddedExec     MsgKey = "timer_added_exec"
-	MsgTimerAddExecUsage  MsgKey = "timer_addexec_usage"
-	MsgTimerEmpty         MsgKey = "timer_empty"
-	MsgTimerListTitle     MsgKey = "timer_list_title"
-	MsgTimerListFooter    MsgKey = "timer_list_footer"
-	MsgTimerDelUsage      MsgKey = "timer_del_usage"
-	MsgTimerMuteUsage     MsgKey = "timer_mute_usage"
-	MsgTimerDeleted       MsgKey = "timer_deleted"
-	MsgTimerNotFound      MsgKey = "timer_not_found"
-	MsgTimerMuted         MsgKey = "timer_muted"
-	MsgTimerUnmuted       MsgKey = "timer_unmuted"
-	MsgTimerCardHint      MsgKey = "timer_card_hint"
-	MsgTimerBtnMute       MsgKey = "timer_btn_mute"
-	MsgTimerBtnUnmute     MsgKey = "timer_btn_unmute"
-	MsgTimerBtnDelete     MsgKey = "timer_btn_delete"
-	MsgTimerIDLabel       MsgKey = "timer_id_label"
-	MsgTimerScheduledLabel MsgKey = "timer_scheduled_label"
-	MsgTimerFailedSuffix  MsgKey = "timer_failed_suffix"
-	MsgCommandsTagAgent          MsgKey = "commands_tag_agent"
-	MsgCommandsTagShell          MsgKey = "commands_tag_shell"
-	MsgUpgradeTimeoutSuffix      MsgKey = "upgrade_timeout_suffix"
+	MsgTimerNotAvailable    MsgKey = "timer_not_available"
+	MsgTimerUsage           MsgKey = "timer_usage"
+	MsgTimerAddUsage        MsgKey = "timer_add_usage"
+	MsgTimerAdded           MsgKey = "timer_added"
+	MsgTimerAddedExec       MsgKey = "timer_added_exec"
+	MsgTimerAddExecUsage    MsgKey = "timer_addexec_usage"
+	MsgTimerEmpty           MsgKey = "timer_empty"
+	MsgTimerListTitle       MsgKey = "timer_list_title"
+	MsgTimerListFooter      MsgKey = "timer_list_footer"
+	MsgTimerDelUsage        MsgKey = "timer_del_usage"
+	MsgTimerMuteUsage       MsgKey = "timer_mute_usage"
+	MsgTimerDeleted         MsgKey = "timer_deleted"
+	MsgTimerNotFound        MsgKey = "timer_not_found"
+	MsgTimerMuted           MsgKey = "timer_muted"
+	MsgTimerUnmuted         MsgKey = "timer_unmuted"
+	MsgTimerCardHint        MsgKey = "timer_card_hint"
+	MsgTimerBtnMute         MsgKey = "timer_btn_mute"
+	MsgTimerBtnUnmute       MsgKey = "timer_btn_unmute"
+	MsgTimerBtnDelete       MsgKey = "timer_btn_delete"
+	MsgTimerIDLabel         MsgKey = "timer_id_label"
+	MsgTimerScheduledLabel  MsgKey = "timer_scheduled_label"
+	MsgTimerFailedSuffix    MsgKey = "timer_failed_suffix"
+	MsgCommandsTagAgent     MsgKey = "commands_tag_agent"
+	MsgCommandsTagShell     MsgKey = "commands_tag_shell"
+	MsgUpgradeTimeoutSuffix MsgKey = "upgrade_timeout_suffix"
 
 	MsgCronScheduleLabel MsgKey = "cron_schedule_label"
 	MsgCronNextRunLabel  MsgKey = "cron_next_run_label"
@@ -549,6 +575,11 @@ const (
 	MsgSearchHint     MsgKey = "search_hint"
 
 	MsgBuiltinCmdNew       MsgKey = "new"
+	MsgMenuNew             MsgKey = "menu_new"
+	MsgMenuSessions        MsgKey = "menu_sessions"
+	MsgMenuModel           MsgKey = "menu_model"
+	MsgMenuReasoning       MsgKey = "menu_reasoning"
+	MsgMenuProjects        MsgKey = "menu_projects"
 	MsgBuiltinCmdList      MsgKey = "list"
 	MsgBuiltinCmdSearch    MsgKey = "search"
 	MsgBuiltinCmdSwitch    MsgKey = "switch"
@@ -3546,6 +3577,21 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese:           "新しいセッションを開始、引数: [名前]",
 		LangSpanish:            "Iniciar una nueva sesión, arg: [nombre]",
 	},
+	MsgMenuNew: {
+		LangEnglish: "New chat", LangChinese: "新建会话", LangTraditionalChinese: "新建對話", LangJapanese: "新しいチャット", LangSpanish: "Nuevo chat",
+	},
+	MsgMenuSessions: {
+		LangEnglish: "Chats", LangChinese: "会话", LangTraditionalChinese: "對話", LangJapanese: "チャット", LangSpanish: "Chats",
+	},
+	MsgMenuModel: {
+		LangEnglish: "Model", LangChinese: "模型", LangTraditionalChinese: "模型", LangJapanese: "モデル", LangSpanish: "Modelo",
+	},
+	MsgMenuReasoning: {
+		LangEnglish: "Reasoning", LangChinese: "推理强度", LangTraditionalChinese: "推理強度", LangJapanese: "推論レベル", LangSpanish: "Razonamiento",
+	},
+	MsgMenuProjects: {
+		LangEnglish: "Projects", LangChinese: "项目", LangTraditionalChinese: "專案", LangJapanese: "プロジェクト", LangSpanish: "Proyectos",
+	},
 	MsgBuiltinCmdList: {
 		LangEnglish:            "List agent sessions",
 		LangChinese:            "列出 Agent 会话列表",
@@ -4198,6 +4244,11 @@ func (i *I18n) T(key MsgKey) string {
 	i.mu.RLock()
 	lang := i.currentLang()
 	i.mu.RUnlock()
+	if lang == LangRussian {
+		if translated, ok := russianMessages[key]; ok {
+			return translated
+		}
+	}
 	if msg, ok := messages[key]; ok {
 		if translated, ok := msg[lang]; ok {
 			return translated

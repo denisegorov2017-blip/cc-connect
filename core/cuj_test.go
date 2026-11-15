@@ -386,6 +386,28 @@ func TestCUJ_B3_SwitchPreservesHistoryEndToEnd(t *testing.T) {
 	}
 }
 
+func TestCUJ_B3_NewThenSwitchPreservesHistory(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	a := &stubListAgent{sessions: []AgentSessionInfo{{ID: "original-thread", Summary: "Original"}}}
+	e := NewEngine("test", a, []Platform{p}, filepath.Join(t.TempDir(), "sessions.json"), LangEnglish)
+	key := "test:history-user"
+	session := e.sessions.GetOrCreateActive(key)
+	session.SetAgentSessionID("original-thread", a.Name())
+	session.AddHistory("user", "remember-original-marker")
+	session.AddHistory("assistant", "original-answer-marker")
+	for _, command := range []string{"/history", "/new Second", "/switch original-thread", "/history"} {
+		p.clearSent()
+		e.ReceiveMessage(p, &Message{SessionKey: key, UserID: "history-user", Content: command, ReplyCtx: "ctx"})
+		sent := strings.Join(p.getSent(), "\n")
+		if command == "/history" && (!strings.Contains(sent, "remember-original-marker") || !strings.Contains(sent, "original-answer-marker")) {
+			t.Fatalf("history lost across new/switch: %s", sent)
+		}
+		if sent == "" {
+			t.Fatalf("command %q has no visible response", command)
+		}
+	}
+}
+
 // ===========================================================================
 // CUJ-C4 · /cancel stops current turn AND creates a fresh session
 //
@@ -1142,7 +1164,7 @@ func TestCUJ_A3_ImageReachesAgent(t *testing.T) {
 		agent.mu.Lock()
 		n := len(agent.sessions)
 		agent.mu.Unlock()
-		if n > 0 {
+		if n > 0 && len(plat.getSent()) > 0 && !e.sessions.GetOrCreateActive("test:img").Busy() {
 			break
 		}
 		select {

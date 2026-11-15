@@ -373,7 +373,7 @@ func TestSendWithButtons(t *testing.T) {
 
 	ctx := context.Background()
 	buttons := [][]core.ButtonOption{{{Text: "OK", Data: "ok"}, {Text: "Cancel", Data: "cancel"}}}
-	if err := p.SendWithButtons(ctx, replyContext{chatID: "111"}, "pick", buttons); err != nil {
+	if err := p.SendWithButtons(ctx, replyContext{chatID: "111", userID: "99"}, "pick", buttons); err != nil {
 		t.Fatalf("SendWithButtons: %v", err)
 	}
 	m.mu.Lock()
@@ -665,7 +665,6 @@ func TestSendAudio(t *testing.T) {
 		t.Fatalf("want audio attachment, got %+v", body.Attachments)
 	}
 }
-
 
 func TestNormalizeLineBreaks(t *testing.T) {
 	cases := []struct {

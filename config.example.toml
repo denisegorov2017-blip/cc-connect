@@ -20,6 +20,7 @@
 # Language for bot messages / 机器人消息语言
 # - "en": English
 # - "zh": 中文
+# - "ru": Russian chat menus and feedback (other messages fall back to English)
 # - "" (empty/not set): Auto-detect from user's first message / 留空自动检测
 # language = "en"
 
@@ -1619,6 +1620,13 @@ app_secret = "your-feishu-app-secret"
 #
 # Optional: specify Codex reasoning effort / 可选：指定 Codex 推理强度
 # reasoning_effort = "high"  # "minimal" | "low" | "medium" | "high" | "xhigh"
+#
+# Optional: incremental Codex output (requires the app-server backend).
+# backend = "app_server"
+# app_server_url = "stdio"
+# streaming = true
+# Use an array for a Windows executable path containing spaces.
+# cmd = ['C:\path to codex\codex.exe']
 #
 # Optional: project system prompt / 可选：项目系统提示
 # Codex has no native system-prompt flag, so cc-connect injects this as a

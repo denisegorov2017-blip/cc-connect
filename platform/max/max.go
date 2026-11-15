@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,7 +24,7 @@ func init() {
 }
 
 const (
-	defaultAPIBase = "https://platform-api.max.ru"
+	defaultAPIBase = "https://platform-api2.max.ru"
 	// pollTimeout — long-poll timeout sent to MAX (seconds). API allows 0–90,
 	// dev docs default = 30. Using 30 balances responsiveness and load.
 	pollTimeout = 30
@@ -31,7 +32,7 @@ const (
 	// pollTimeout, otherwise transient MAX backend lag pushes header arrival
 	// past the deadline and the client cancels the long-poll, triggering a
 	// retry storm.
-	httpTimeout = 90 * time.Second
+	httpTimeout             = 90 * time.Second
 	initialReconnectBackoff = time.Second
 	maxReconnectBackoff     = 30 * time.Second
 	stableConnectionWindow  = 10 * time.Second
@@ -107,6 +108,7 @@ type Platform struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	stopping     bool
+	buttonMenus  map[string]buttonMenu
 	client       *http.Client // general API calls — httpTimeout
 	uploadClient *http.Client // CDN uploads — attachmentUploadTO (overrides short client Timeout)
 	dedup        core.MessageDedup
@@ -446,19 +448,7 @@ func (p *Platform) Send(ctx context.Context, replyCtx any, content string) error
 
 // SendWithButtons implements core.InlineButtonSender — sends message with callback buttons.
 func (p *Platform) SendWithButtons(ctx context.Context, replyCtx any, content string, buttons [][]core.ButtonOption) error {
-	maxButtons := make([][]maxButton, 0, len(buttons))
-	for _, row := range buttons {
-		maxRow := make([]maxButton, 0, len(row))
-		for _, btn := range row {
-			maxRow = append(maxRow, maxButton{
-				Type:    "callback",
-				Text:    btn.Text,
-				Payload: btn.Data,
-			})
-		}
-		maxButtons = append(maxButtons, maxRow)
-	}
-	return p.sendText(ctx, replyCtx, content, maxButtons)
+	return p.sendBoundButtons(ctx, replyCtx, content, buttons)
 }
 
 // SendImage implements core.ImageSender.
@@ -547,6 +537,9 @@ func (p *Platform) UpdateMessage(ctx context.Context, replyCtx any, content stri
 	if rctx.messageID == "" {
 		return fmt.Errorf("max: update message: no message id in reply context")
 	}
+	if len([]rune(content)) > 4000 {
+		return fmt.Errorf("max: update message: text exceeds 4000 characters")
+	}
 	body := maxSendBody{Text: content, Format: "markdown"}
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -571,6 +564,16 @@ func (p *Platform) UpdateMessage(ctx context.Context, replyCtx any, content stri
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("max: edit message: HTTP %d: %s", resp.StatusCode, respBody)
 	}
+	var result struct {
+		Success *bool  `json:"success"`
+		Code    string `json:"code"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil && err != io.EOF {
+		return fmt.Errorf("max: decode edit result: %w", err)
+	}
+	if result.Success != nil && !*result.Success {
+		return fmt.Errorf("max: edit rejected: %s", result.Code)
+	}
 	return nil
 }
 
@@ -586,6 +589,24 @@ func (p *Platform) uploadAttachment(ctx context.Context, kind string, data []byt
 	// and would abort large CDN uploads before the context expires.
 	uploadCtx, cancel := context.WithTimeout(ctx, attachmentUploadTO)
 	defer cancel()
+	apiURL, err := url.Parse(p.apiBase)
+	if err != nil {
+		return "", fmt.Errorf("max: parse API URL: %w", err)
+	}
+	client := *p.uploadClient
+	previousRedirect := client.CheckRedirect
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if !sameOrigin(req.URL, apiURL) {
+			req.Header.Del("Authorization")
+		}
+		if previousRedirect != nil {
+			return previousRedirect(req, via)
+		}
+		if len(via) >= 10 {
+			return fmt.Errorf("max: too many upload redirects")
+		}
+		return nil
+	}
 
 	urlReq, err := http.NewRequestWithContext(uploadCtx, http.MethodPost, p.apiBase+"/uploads", nil)
 	if err != nil {
@@ -596,7 +617,7 @@ func (p *Platform) uploadAttachment(ctx context.Context, kind string, data []byt
 	q.Set("type", kind)
 	urlReq.URL.RawQuery = q.Encode()
 
-	urlResp, err := p.uploadClient.Do(urlReq)
+	urlResp, err := client.Do(urlReq)
 	if err != nil {
 		return "", fmt.Errorf("request upload url: %w", err)
 	}
@@ -636,10 +657,12 @@ func (p *Platform) uploadAttachment(ctx context.Context, kind string, data []byt
 	if err != nil {
 		return "", err
 	}
-	p.setAuth(cdnReq)
+	if sameOrigin(cdnReq.URL, apiURL) {
+		p.setAuth(cdnReq)
+	}
 	cdnReq.Header.Set("Content-Type", mw.FormDataContentType())
 
-	cdnResp, err := p.uploadClient.Do(cdnReq)
+	cdnResp, err := client.Do(cdnReq)
 	if err != nil {
 		return "", fmt.Errorf("cdn upload: %w", err)
 	}
@@ -693,6 +716,11 @@ func extractCDNToken(kind string, body []byte) string {
 		}
 	}
 	return ""
+}
+
+func sameOrigin(a, b *url.URL) bool {
+	return a != nil && b != nil && a.Hostname() != "" &&
+		strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
 }
 
 func defaultFilename(kind string) string {
@@ -895,7 +923,7 @@ type maxCallback struct {
 	CallbackID string     `json:"callback_id"`
 	Payload    string     `json:"payload"`
 	User       maxUser    `json:"user"`
-	Message    maxMessage `json:"message"`
+	Message    maxMessage `json:"-"` // Populated from the update's top-level message.
 }
 
 type maxUpdatesResponse struct {
@@ -994,7 +1022,11 @@ func (p *Platform) handleUpdate(ctx context.Context, upd *maxUpdate) {
 		}
 	case "message_callback":
 		if upd.Callback != nil {
-			p.handleCallback(ctx, upd.Callback)
+			cb := *upd.Callback
+			if upd.Message != nil {
+				cb.Message = *upd.Message
+			}
+			p.handleCallback(ctx, &cb)
 		}
 	}
 }
@@ -1348,16 +1380,31 @@ func (p *Platform) handleCallback(ctx context.Context, cb *maxCallback) {
 	}
 	sessionKey := fmt.Sprintf("max:%s:%s", chatID, userID)
 	rctx := replyContext{chatID: chatID, userID: userID, messageID: cb.Message.Body.Mid}
+	payload := cb.Payload
+	if strings.HasPrefix(payload, "perm:") || strings.HasPrefix(payload, "askq:") {
+		slog.Debug("max: unbound decision callback ignored")
+		return
+	}
+	if strings.HasPrefix(payload, "ui:") {
+		var valid bool
+		rctx, payload, valid = p.resolveButton(cb)
+		if !valid {
+			p.answerButton(ctx, cb.CallbackID, "✕")
+			return
+		}
+		sessionKey = fmt.Sprintf("max:%s:%s", rctx.chatID, userID)
+		p.answerButton(ctx, cb.CallbackID, "✓")
+	}
 
 	slog.Debug("max: callback received", "user", cb.User.Name, "payload", cb.Payload)
 
 	// Translate permission payloads like the Telegram platform does, and flag the
 	// message so a stale click is dropped instead of reaching the agent as user
 	// input. Any other payload (ordinary buttons) passes through untouched.
-	content := cb.Payload
-	isPerm := false
+	content := strings.TrimPrefix(payload, "cmd:")
+	isPerm := strings.HasPrefix(payload, "askq:")
 	choice := ""
-	if d, ok := permPayloads[cb.Payload]; ok {
+	if d, ok := permPayloads[payload]; ok {
 		content, choice, isPerm = d.token, d.label, true
 	}
 
@@ -1472,9 +1519,14 @@ func (p *Platform) sendText(ctx context.Context, replyCtx any, content string, b
 // sendText, SendImage, SendFile — kept separate so retry/backoff for
 // "attachment.not.ready" lives in one place.
 func (p *Platform) postMessage(ctx context.Context, rctx replyContext, body *maxSendBody) error {
+	_, err := p.postMessageID(ctx, rctx, body)
+	return err
+}
+
+func (p *Platform) postMessageID(ctx context.Context, rctx replyContext, body *maxSendBody) (string, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
-		return err
+		return "", err
 	}
 	// Target selection: chat_id when MAX gave us one, user_id otherwise.
 	// Private-dialog callbacks arrive with recipient.chat_id = 0 (see hasChat),
@@ -1482,7 +1534,7 @@ func (p *Platform) postMessage(ctx context.Context, rctx replyContext, body *max
 	target, targetValue := "chat_id", rctx.chatID
 	if !rctx.hasChat() {
 		if rctx.userID == "" {
-			return fmt.Errorf("max: send message: reply context has neither chat_id nor user_id")
+			return "", fmt.Errorf("max: send message: reply context has neither chat_id nor user_id")
 		}
 		target, targetValue = "user_id", rctx.userID
 	}
@@ -1490,7 +1542,7 @@ func (p *Platform) postMessage(ctx context.Context, rctx replyContext, body *max
 	for attempt := 0; attempt <= attachmentReadyRetries; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.apiBase+"/messages", bytes.NewReader(data))
 		if err != nil {
-			return err
+			return "", err
 		}
 		p.setAuth(req)
 		q := req.URL.Query()
@@ -1500,28 +1552,50 @@ func (p *Platform) postMessage(ctx context.Context, rctx replyContext, body *max
 
 		resp, err := p.client.Do(req)
 		if err != nil {
-			return fmt.Errorf("max: send message: %w", err)
+			return "", fmt.Errorf("max: send message: %w", err)
 		}
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK {
-			return nil
+			if len(respBody) == 0 {
+				return "", nil
+			}
+			var result struct {
+				Success   *bool  `json:"success"`
+				Code      string `json:"code"`
+				MessageID string `json:"message_id"`
+				Message   struct {
+					Body struct {
+						Mid string `json:"mid"`
+					} `json:"body"`
+				} `json:"message"`
+			}
+			if err := json.Unmarshal(respBody, &result); err != nil {
+				return "", fmt.Errorf("max: decode sent message: %w", err)
+			}
+			if result.Success != nil && !*result.Success {
+				return "", fmt.Errorf("max: send rejected: %s", result.Code)
+			}
+			if result.Message.Body.Mid != "" {
+				return result.Message.Body.Mid, nil
+			}
+			return result.MessageID, nil
 		}
 		if isAttachmentNotReady(respBody) && attempt < attachmentReadyRetries {
 			slog.Debug("max: attachment not ready, retrying", "attempt", attempt+1, "backoff", backoff)
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return "", ctx.Err()
 			case <-time.After(backoff):
 			}
 			backoff *= 2
 			continue
 		}
 		slog.Warn("max: send message failed", "status", resp.StatusCode, target, targetValue, "body", string(respBody))
-		return fmt.Errorf("max: send message: HTTP %d: %s", resp.StatusCode, respBody)
+		return "", fmt.Errorf("max: send message: HTTP %d: %s", resp.StatusCode, respBody)
 	}
-	return fmt.Errorf("max: send message: attachment not ready after %d retries", attachmentReadyRetries)
+	return "", fmt.Errorf("max: send message: attachment not ready after %d retries", attachmentReadyRetries)
 }
 
 func isAttachmentNotReady(body []byte) bool {
