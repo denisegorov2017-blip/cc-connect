@@ -6966,14 +6966,13 @@ func (e *Engine) cmdList(p Platform, msg *Message, args []string) {
 				displayName = strings.ReplaceAll(s.Summary, "\n", " ")
 				displayName = strings.Join(strings.Fields(displayName), " ")
 				if displayName == "" {
-					displayName = "(empty)"
+					displayName = e.i18n.T(MsgListEmptySummary)
 				}
 				if len([]rune(displayName)) > 40 {
 					displayName = string([]rune(displayName)[:40]) + "…"
 				}
 			}
-			sb.WriteString(fmt.Sprintf("%s **%d.** %s · **%d** msgs · %s\n",
-				marker, i+1, displayName, s.MessageCount, s.ModifiedAt.Format("01-02 15:04")))
+			sb.WriteString(e.i18n.Tf(MsgListItem, marker, i+1, displayName, s.MessageCount, s.ModifiedAt.Format("01-02 15:04")) + "\n")
 			buttons = append(buttons, []ButtonOption{{Text: marker + " " + displayName, Data: "cmd:/switch " + s.ID}})
 		}
 		if totalPages > 1 {
@@ -7316,53 +7315,26 @@ func formatStatusTokenCount(n int) string {
 //
 // Streaming = true → "⏱ 运行中 12.3 秒..." / "⏱ Running for 12.3s..."
 // Streaming = false → "⏱ 用时 1 分 23 秒"  / "⏱ Elapsed 1m 23s"
-//
-// Currently supports ZH-family (zh / zh-tw) and EN-default. Other languages
-// (ja / es) fall back to EN format. Could be promoted to full MsgKey i18n
-// later if needed.
 func formatElapsed(d time.Duration, streaming bool, lang Language) string {
 	if d < 0 {
 		d = 0
 	}
-	zh := lang == LangChinese || lang == LangTraditionalChinese
+	localizer := NewI18n(lang)
 	totalSec := int64(d / time.Second)
-	var dur string
+	var duration string
 	switch {
 	case d < time.Minute:
-		if zh {
-			dur = fmt.Sprintf("%.1f 秒", d.Seconds())
-		} else {
-			dur = fmt.Sprintf("%.1fs", d.Seconds())
-		}
+		duration = localizer.Tf(MsgElapsedSeconds, d.Seconds())
 	case d < time.Hour:
-		m := totalSec / 60
-		s := totalSec % 60
-		if zh {
-			dur = fmt.Sprintf("%d 分 %02d 秒", m, s)
-		} else {
-			dur = fmt.Sprintf("%dm %02ds", m, s)
-		}
+		duration = localizer.Tf(MsgElapsedMinutes, totalSec/60, totalSec%60)
 	default:
-		h := totalSec / 3600
-		m := (totalSec % 3600) / 60
-		if zh {
-			dur = fmt.Sprintf("%d 小时 %02d 分", h, m)
-		} else {
-			dur = fmt.Sprintf("%dh %02dm", h, m)
-		}
+		duration = localizer.Tf(MsgElapsedHours, totalSec/3600, (totalSec%3600)/60)
 	}
 	if streaming {
-		if zh {
-			return fmt.Sprintf("⏱ 运行中 %s...", dur)
-		}
-		return fmt.Sprintf("⏱ Running for %s...", dur)
+		return localizer.Tf(MsgElapsedRunning, duration)
 	}
-	if zh {
-		return fmt.Sprintf("⏱ 用时 %s", dur)
-	}
-	return fmt.Sprintf("⏱ Elapsed %s", dur)
+	return localizer.Tf(MsgElapsedComplete, duration)
 }
-
 func replyFooterModel(session AgentSession, agent Agent) string {
 	if session != nil {
 		if getter, ok := session.(interface{ GetModel() string }); ok {

@@ -3,6 +3,11 @@ package core
 // Russian covers the chat menus and their immediate feedback. Other messages
 // use the existing English fallback until their translations are added.
 var russianMessages = map[MsgKey]string{
+	MsgElapsedSeconds:                "%.1f с",
+	MsgElapsedMinutes:                "%d мин %02d с",
+	MsgElapsedHours:                  "%d ч %02d мин",
+	MsgElapsedRunning:                "⏱ Выполняется %s...",
+	MsgElapsedComplete:               "⏱ Время ответа: %s",
 	MsgModeSuggestName:               "Только чтение",
 	MsgModeSuggestDesc:               "Файлы доступны только для чтения. В app_server инструменты запрашивают разрешение; в exec запросов разрешения нет.",
 	MsgModeAutoEditName:              "Автоправка",

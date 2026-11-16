@@ -203,6 +203,11 @@ const (
 	MsgFooterOutput       MsgKey = "footer_output"
 	MsgFooterInput        MsgKey = "footer_input"
 	MsgFooterContext      MsgKey = "footer_context"
+	MsgElapsedSeconds     MsgKey = "elapsed_seconds"
+	MsgElapsedMinutes     MsgKey = "elapsed_minutes"
+	MsgElapsedHours       MsgKey = "elapsed_hours"
+	MsgElapsedRunning     MsgKey = "elapsed_running"
+	MsgElapsedComplete    MsgKey = "elapsed_complete"
 )
 
 func (i *I18n) permissionModeLabels(mode PermissionModeInfo) (string, string) {
@@ -727,6 +732,11 @@ const (
 )
 
 var messages = map[MsgKey]map[Language]string{
+	MsgElapsedSeconds:     {LangEnglish: "%.1fs", LangChinese: "%.1f 秒", LangTraditionalChinese: "%.1f 秒", LangJapanese: "%.1f秒", LangSpanish: "%.1fs"},
+	MsgElapsedMinutes:     {LangEnglish: "%dm %02ds", LangChinese: "%d 分 %02d 秒", LangTraditionalChinese: "%d 分 %02d 秒", LangJapanese: "%d分 %02d秒", LangSpanish: "%dm %02ds"},
+	MsgElapsedHours:       {LangEnglish: "%dh %02dm", LangChinese: "%d 小时 %02d 分", LangTraditionalChinese: "%d 小时 %02d 分", LangJapanese: "%d時間 %02d分", LangSpanish: "%dh %02dm"},
+	MsgElapsedRunning:     {LangEnglish: "⏱ Running for %s...", LangChinese: "⏱ 运行中 %s...", LangTraditionalChinese: "⏱ 运行中 %s...", LangJapanese: "⏱ 実行中 %s...", LangSpanish: "⏱ En curso %s..."},
+	MsgElapsedComplete:    {LangEnglish: "⏱ Elapsed %s", LangChinese: "⏱ 用时 %s", LangTraditionalChinese: "⏱ 用时 %s", LangJapanese: "⏱ 経過 %s", LangSpanish: "⏱ Duración %s"},
 	MsgModeSuggestName:    {LangEnglish: "Suggest", LangChinese: "建议", LangTraditionalChinese: "建議", LangJapanese: "提案", LangSpanish: "Sugerir"},
 	MsgModeSuggestDesc:    {LangEnglish: "Read-only sandbox; on exec backend no prompts, on app_server backend asks for every tool call", LangChinese: "只读沙箱；exec 不弹审批，app_server 每次工具调用询问", LangTraditionalChinese: "唯讀沙箱；exec 不顯示核准提示，app_server 每次工具呼叫詢問", LangJapanese: "読み取り専用。exec は承認なし、app_server はツールごとに承認を要求", LangSpanish: "Solo lectura; exec sin avisos, app_server pide permiso para cada herramienta"},
 	MsgModeAutoEditName:   {LangEnglish: "Auto Edit", LangChinese: "自动编辑", LangTraditionalChinese: "自動編輯", LangJapanese: "自動編集", LangSpanish: "Edición automática"},

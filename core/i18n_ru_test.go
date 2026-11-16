@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestConfiguredRussianLanguageSurvivesStartup(t *testing.T) {
@@ -112,5 +113,37 @@ func TestRussianReplyFooterUsesReadableLabels(t *testing.T) {
 		if !strings.Contains(footer, want) {
 			t.Errorf("footer missing %q: %s", want, footer)
 		}
+	}
+}
+
+func TestRussianElapsedLabels(t *testing.T) {
+	for _, tc := range []struct {
+		duration  time.Duration
+		streaming bool
+		want      string
+	}{
+		{-time.Second, false, "⏱ Время ответа: 0.0 с"},
+		{12300 * time.Millisecond, true, "⏱ Выполняется 12.3 с..."},
+		{83 * time.Second, false, "⏱ Время ответа: 1 мин 23 с"},
+		{2*time.Hour + 5*time.Minute, false, "⏱ Время ответа: 2 ч 05 мин"},
+	} {
+		if got := formatElapsed(tc.duration, tc.streaming, LangRussian); got != tc.want {
+			t.Errorf("elapsed: got %q, want %q", got, tc.want)
+		}
+	}
+	if got := formatElapsed(83*time.Second, false, LangEnglish); got != "⏱ Elapsed 1m 23s" {
+		t.Errorf("English elapsed changed: %q", got)
+	}
+}
+
+func TestRussianPlainSessionListLocalizesCountAndEmptyTitle(t *testing.T) {
+	p := &stubInlineButtonPlatform{stubPlatformEngine: stubPlatformEngine{n: "inline"}}
+	e := NewEngine("test", &stubListAgent{sessions: []AgentSessionInfo{{ID: "empty-session", MessageCount: 3}}}, []Platform{p}, "", LangRussian)
+	e.cmdList(p, &Message{SessionKey: "inline:chat:user", ReplyCtx: "ctx"}, nil)
+	if strings.Contains(p.buttonContent, "msgs") || strings.Contains(p.buttonContent, "(empty)") || !strings.Contains(p.buttonContent, "**3** сообщ.") {
+		t.Fatalf("session list still contains English labels: %q", p.buttonContent)
+	}
+	if p.buttonRows[0][0].Data != "cmd:/switch empty-session" {
+		t.Fatalf("translation changed session identity: %#v", p.buttonRows)
 	}
 }
