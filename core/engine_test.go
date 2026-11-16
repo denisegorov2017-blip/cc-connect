@@ -6732,13 +6732,16 @@ func TestProcessInteractiveEvents_AskUserQuestionFromAgent_RendersRichCardPrompt
 	if countCardActionValues(card, "askq:") != 3 {
 		t.Fatalf("askq button count = %d, want 3", countCardActionValues(card, "askq:"))
 	}
+	state.mu.Lock()
+	answer := "askq:" + state.pending.QuestionToken + ":0:2"
+	state.mu.Unlock()
 
 	if !e.handlePendingPermission(p, &Message{
 		SessionKey: key,
 		UserID:     "user1",
-		Content:    "askq:0:2",
+		Content:    answer,
 		ReplyCtx:   "ctx",
-	}, "askq:0:2", key) {
+	}, answer, key) {
 		t.Fatal("expected AskUserQuestion answer to resolve pending request")
 	}
 

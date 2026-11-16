@@ -361,6 +361,8 @@ type LocationAttachment struct {
 
 // Message represents a unified incoming message from any platform.
 type Message struct {
+	questionSession *Session // validated async answer; pinned to its originating conversation
+
 	SessionKey   string // unique key for user context, e.g. "feishu:{chatID}:{userID}"
 	Platform     string
 	MessageID    string // platform message ID for tracing
@@ -411,6 +413,7 @@ const (
 	EventResult            EventType = "result"             // final aggregated result
 	EventError             EventType = "error"              // error occurred
 	EventPermissionRequest EventType = "permission_request" // agent requests permission via stdio protocol
+	EventUserInputRequest  EventType = "user_input_request" // non-blocking question; answer is user input
 	EventThinking          EventType = "thinking"           // thinking/processing status
 )
 

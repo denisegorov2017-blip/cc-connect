@@ -718,7 +718,14 @@ func (s *appServerSession) handleRequestUserInput(rawID json.RawMessage, paramsR
 	}
 
 	questions := appServerRequestUserInputQuestions(params.Questions)
-	if len(questions) == 0 {
+	// Match upstream's child-request isolation: a process may also receive
+	// questions from subagent threads; they do not belong to its parent chat.
+	s.stateMu.Lock()
+	currentTurn := s.currentTurn
+	s.stateMu.Unlock()
+	foreign := params.ThreadID != "" && s.CurrentSessionID() != "" && params.ThreadID != s.CurrentSessionID()
+	stale := params.TurnID != "" && currentTurn != "" && params.TurnID != currentTurn
+	if len(questions) == 0 || foreign || stale {
 		_ = s.writeJSON(map[string]any{
 			"jsonrpc": "2.0", "id": rawID,
 			"result": appServerRequestUserInputResponse{Answers: map[string]appServerRequestUserInputAnswer{}},
@@ -1161,6 +1168,9 @@ func (s *appServerSession) handleNotification(method string, paramsRaw json.RawM
 	case "item/completed":
 		var notif itemNotification
 		if err := json.Unmarshal(paramsRaw, &notif); err == nil {
+			if notif.Item["delivery"] == "async" && notif.ThreadID != "" && notif.ThreadID != s.CurrentSessionID() {
+				return
+			}
 			s.stateMu.Lock()
 			stale := notif.TurnID != "" && notif.TurnID != s.currentTurn
 			s.stateMu.Unlock()
@@ -1268,6 +1278,9 @@ func (s *appServerSession) handleItemCompleted(item map[string]any) {
 		}
 
 	case "agentMessage":
+		if s.handleAsyncUserInput(item) {
+			return
+		}
 		text, _ := item["text"].(string)
 		id, _ := item["id"].(string)
 		s.stateMu.Lock()

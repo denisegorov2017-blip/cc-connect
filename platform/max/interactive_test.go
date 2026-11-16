@@ -104,6 +104,39 @@ func TestUnboundDecisionCallbackIsRejected(t *testing.T) {
 	}
 }
 
+func TestQuestionChoiceClearsKeyboardAndConfirmsRussianLabel(t *testing.T) {
+	var edited map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			if err := json.NewDecoder(r.Body).Decode(&edited); err != nil {
+				t.Error(err)
+			}
+		}
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer server.Close()
+	p := newTestPlatform(t, server.URL)
+	p.buttonMenus = map[string]buttonMenu{"nonce": {
+		reply: replyContext{chatID: "555", userID: "99"}, messageID: "question", decision: true,
+		expires: time.Now().Add(time.Minute), actions: []string{"askq:async_token:0:1"}, labels: []string{"Расход"},
+	}}
+	calls := 0
+	p.handler = func(_ core.Platform, m *core.Message) {
+		calls++
+		if m.Content != "askq:async_token:0:1" || !m.IsPermissionResponse || m.SessionKey != "max:555:99" {
+			t.Errorf("lost question binding: %#v", m)
+		}
+	}
+	cb := &maxCallback{CallbackID: "click-1", Payload: "ui:nonce:0", User: maxUser{UserID: 99}, Message: maxMessage{Body: maxBody{Mid: "question", Text: "Вид операции?"}}}
+	p.handleCallback(context.Background(), cb)
+	cb.CallbackID = "click-2"
+	p.handleCallback(context.Background(), cb)
+	attachments, ok := edited["attachments"].([]any)
+	if !ok || len(attachments) != 0 || !strings.Contains(fmt.Sprint(edited["text"]), "✓ Расход") || calls != 1 {
+		t.Fatalf("choice not visibly consumed exactly once: edit=%#v calls=%d", edited, calls)
+	}
+}
+
 func TestDecisionCallbackPreservesBoundRussianLabel(t *testing.T) {
 	p := newTestPlatform(t, "http://127.0.0.1:0")
 	p.buttonMenus = map[string]buttonMenu{"nonce": {
