@@ -717,6 +717,12 @@ func main() {
 				Language: cfg.Speech.Language,
 			}
 			switch cfg.Speech.Provider {
+			case "command":
+				if len(cfg.Speech.Command.Cmd) > 0 {
+					speechCfg.STT = core.NewCommandSTT(cfg.Speech.Command.Cmd, time.Duration(cfg.Speech.Command.TimeoutSeconds)*time.Second)
+				} else {
+					slog.Warn("speech: command provider enabled but cmd is empty")
+				}
 			case "groq":
 				apiKey := cfg.Speech.Groq.APIKey
 				model := cfg.Speech.Groq.Model

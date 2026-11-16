@@ -263,9 +263,13 @@ type RelayConfig struct {
 // SpeechConfig configures speech-to-text for voice messages.
 type SpeechConfig struct {
 	Enabled  bool   `toml:"enabled"`
-	Provider string `toml:"provider"` // "openai" | "groq" | "qwen" | "gemini"
+	Provider string `toml:"provider"` // "openai" | "groq" | "qwen" | "gemini" | "command"
 	Language string `toml:"language"` // e.g. "zh", "en"; empty = auto-detect
-	OpenAI   struct {
+	Command  struct {
+		Cmd            []string `toml:"cmd"` // executable + arguments; no shell expansion
+		TimeoutSeconds int      `toml:"timeout_seconds"`
+	} `toml:"command"`
+	OpenAI struct {
 		APIKey  string `toml:"api_key"`
 		BaseURL string `toml:"base_url"`
 		Model   string `toml:"model"`
@@ -1004,6 +1008,14 @@ func (c *Config) validate() error {
 }
 
 func (c *Config) validateInternal(permissive bool) error {
+	if c.Speech.Enabled && c.Speech.Provider == "command" {
+		if len(c.Speech.Command.Cmd) == 0 || strings.TrimSpace(c.Speech.Command.Cmd[0]) == "" {
+			return fmt.Errorf("config: speech.command.cmd must contain an executable")
+		}
+		if c.Speech.Command.TimeoutSeconds < 0 || c.Speech.Command.TimeoutSeconds > 120 {
+			return fmt.Errorf("config: speech.command.timeout_seconds must be between 0 (default) and 120")
+		}
+	}
 	if err := validateDisplayConfig("display", &c.Display); err != nil {
 		return err
 	}
