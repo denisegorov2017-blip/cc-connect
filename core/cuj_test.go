@@ -1180,31 +1180,41 @@ func TestCUJ_A3_ImageReachesAgent(t *testing.T) {
 // "voice not enabled" message (the actual STT branch is covered by
 // platform-specific tests).
 func TestCUJ_A4_VoiceMessageWithoutSTTSurfacesClearMessage(t *testing.T) {
-	plat := &stubPlatformEngine{n: "test"}
-	agent := &cujAgent{}
-	dir := t.TempDir()
-	e := NewEngine("test", agent, []Platform{plat}, dir+"/sessions.json", LangEnglish)
-
-	msg := &Message{
+	env := newCUJEnv(t)
+	defer env.engine.Stop()
+	// 1. Failed attachment must get a localized failure, never a partial turn.
+	env.engine.ReceiveMessage(env.plat, &Message{
+		SessionKey: "test:voice", Platform: "test", MessageID: "failed",
+		UserID: "voice", Content: "DO-NOT-SEND", ReplyCtx: "ctx",
+		InputError: MsgInputMediaError,
+		OnAccepted: func() { t.Error("failed attachment accepted for an agent turn") },
+	})
+	if env.lastSent() != env.engine.i18n.T(MsgInputMediaError) {
+		t.Fatalf("missing attachment failure: %q", env.lastSent())
+	}
+	// 2. A raw voice caption is not a platform transcript.
+	env.engine.ReceiveMessage(env.plat, &Message{
 		SessionKey: "test:voice", Platform: "test", MessageID: "v1",
 		UserID: "voice", UserName: "voice",
-		Audio:    &AudioAttachment{MimeType: "audio/ogg", Format: "ogg", Data: []byte("fake-ogg")},
+		Audio:    &AudioAttachment{MimeType: "audio/ogg", Format: "ogg", Data: []byte("fake-ogg"), Caption: "DO-NOT-SEND-CAPTION"},
 		ReplyCtx: "ctx",
+	})
+	if env.lastSent() != env.engine.i18n.T(MsgVoiceNotEnabled) {
+		t.Fatalf("voice without STT got no clear reply: %q", env.lastSent())
 	}
-	e.ReceiveMessage(plat, msg)
-
-	deadline := time.After(2 * time.Second)
-	for {
-		if len(plat.getSent()) > 0 {
-			return
-		}
-		select {
-		case <-deadline:
-			t.Fatal("voice message without STT got NO user-facing reply")
-		default:
-			time.Sleep(10 * time.Millisecond)
-		}
+	env.agent.mu.Lock()
+	started := len(env.agent.sessions)
+	env.agent.mu.Unlock()
+	if started != 0 {
+		t.Fatal("partial voice input started an agent session")
 	}
+	// 3. A real platform transcript is ordinary text and still works.
+	env.agent.setNextSessionEvents([]Event{{Type: EventResult, Content: "VOICE-TEXT-OK", Done: true}}, 0)
+	env.engine.ReceiveMessage(env.plat, &Message{
+		SessionKey: "test:voice", Platform: "test", MessageID: "native-transcript",
+		UserID: "voice", Content: "Тест голоса", FromVoice: true, ReplyCtx: "ctx",
+	})
+	env.waitFor("native transcript reply", 2*time.Second, func() bool { return env.sentContains("VOICE-TEXT-OK") })
 }
 
 // CUJ-A5 · User uploads file → engine routes it to the agent.

@@ -208,6 +208,7 @@ const (
 	MsgElapsedHours       MsgKey = "elapsed_hours"
 	MsgElapsedRunning     MsgKey = "elapsed_running"
 	MsgElapsedComplete    MsgKey = "elapsed_complete"
+	MsgInputMediaError    MsgKey = "input_attachment_failed"
 )
 
 func (i *I18n) permissionModeLabels(mode PermissionModeInfo) (string, string) {
@@ -732,6 +733,7 @@ const (
 )
 
 var messages = map[MsgKey]map[Language]string{
+	MsgInputMediaError:    {LangEnglish: "The attachment could not be read. This request was not sent to the agent. Please retry later.", LangChinese: "无法读取附件。本次请求未发送给代理，请稍后重试。", LangTraditionalChinese: "無法讀取附件。本次請求未傳送給代理，請稍後重試。", LangJapanese: "添付ファイルを読み取れませんでした。リクエストはエージェントに送信されていません。後でもう一度お試しください。", LangSpanish: "No se pudo leer el archivo adjunto. La solicitud no se envió al agente. Inténtalo más tarde."},
 	MsgElapsedSeconds:     {LangEnglish: "%.1fs", LangChinese: "%.1f 秒", LangTraditionalChinese: "%.1f 秒", LangJapanese: "%.1f秒", LangSpanish: "%.1fs"},
 	MsgElapsedMinutes:     {LangEnglish: "%dm %02ds", LangChinese: "%d 分 %02d 秒", LangTraditionalChinese: "%d 分 %02d 秒", LangJapanese: "%d分 %02d秒", LangSpanish: "%dm %02ds"},
 	MsgElapsedHours:       {LangEnglish: "%dh %02dm", LangChinese: "%d 小时 %02d 分", LangTraditionalChinese: "%d 小时 %02d 分", LangJapanese: "%d時間 %02d分", LangSpanish: "%dh %02dm"},

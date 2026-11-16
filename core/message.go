@@ -347,6 +347,7 @@ type AudioAttachment struct {
 	Data     []byte // raw audio bytes
 	Format   string // short format hint: "amr", "ogg", "m4a", "mp3", "wav", etc.
 	Duration int    // duration in seconds (if known)
+	Caption  string // User caption, separate from a platform-provided transcript.
 }
 
 // LocationAttachment represents a geographical location sent by the user.
@@ -370,6 +371,7 @@ type Message struct {
 	UserName     string
 	ChatName     string // human-readable chat/group name (optional)
 	Content      string
+	InputError   MsgKey              // Optional localized input failure; no partial content may reach the agent.
 	Images       []ImageAttachment   // attached images (if any)
 	Files        []FileAttachment    // attached files (if any)
 	Audio        *AudioAttachment    // voice message (if any)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -896,9 +897,8 @@ type maxBody struct {
 
 // maxAttachmentRaw mirrors what MAX API delivers in message_created updates.
 // Known types: "image", "video", "audio", "file", "sticker", "share".
-// "image" carries payload.url directly; "video"/"audio" only carry payload.token
-// and require an extra API round-trip (/videos/{token}, /audios/{token}) to
-// resolve the actual download URL.
+// Media carries payload.url. Video can also resolve a token through the
+// documented /videos/{token}; the Bot API has no /audios/{token} endpoint.
 type maxAttachmentRaw struct {
 	Type     string             `json:"type"`
 	Payload  maxAttachmentPayld `json:"payload"`
@@ -1098,7 +1098,23 @@ func (p *Platform) handleMessage(ctx context.Context, msg *maxMessage) {
 	if len(transcripts) > 0 {
 		slog.Info("max: native audio transcript selected", "source", "max", "count", len(transcripts))
 	}
-	images, files, audio := p.fetchAttachments(ctx, media)
+	images, files, audio, attachmentErr := p.fetchAttachments(ctx, media)
+	if attachmentErr != nil {
+		// Never log a signed CDN URL or send caption-only content after a
+		// failed download. The engine owns localized user-facing errors.
+		slog.Warn("max: attachment rejected", "reason", attachmentErr.Error())
+		if handler := p.getHandler(); handler != nil {
+			handler(p, &core.Message{SessionKey: sessionKey, Platform: "max", MessageID: msg.Body.Mid,
+				UserID: userID, ReplyCtx: rctx, InputError: core.MsgInputMediaError})
+		}
+		return
+	}
+	if audio != nil {
+		// Content is NOT recognition text. Keep the caption separately so
+		// an unconfigured STT cannot silently send a caption-only request.
+		audio.Caption = text
+		text = ""
+	}
 
 	if text == "" && audio == nil && (len(images) > 0 || len(files) > 0) {
 		switch {
@@ -1158,9 +1174,9 @@ func separateNativeAudioTranscripts(atts []maxAttachmentRaw) ([]maxAttachmentRaw
 // returned separately so the core engine can route it through the speech
 // transcription pipeline instead of exposing a raw .mp3 to the agent.
 // Unsupported types (sticker, share, contact) are silently dropped.
-func (p *Platform) fetchAttachments(ctx context.Context, atts []maxAttachmentRaw) ([]core.ImageAttachment, []core.FileAttachment, *core.AudioAttachment) {
+func (p *Platform) fetchAttachments(ctx context.Context, atts []maxAttachmentRaw) ([]core.ImageAttachment, []core.FileAttachment, *core.AudioAttachment, error) {
 	if len(atts) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	var images []core.ImageAttachment
 	var files []core.FileAttachment
@@ -1170,8 +1186,7 @@ func (p *Platform) fetchAttachments(ctx context.Context, atts []maxAttachmentRaw
 		case "image":
 			data, mime, err := p.downloadAttachment(ctx, a.Payload.URL)
 			if err != nil {
-				slog.Warn("max: image download failed", "error", err)
-				continue
+				return nil, nil, nil, errors.New("image_download_failed")
 			}
 			if mime == "" || mime == "application/octet-stream" {
 				mime = sniffImageMime(data)
@@ -1184,13 +1199,11 @@ func (p *Platform) fetchAttachments(ctx context.Context, atts []maxAttachmentRaw
 		case "file":
 			url := a.Payload.URL
 			if url == "" {
-				slog.Warn("max: file attachment without payload.url, skipping", "filename", a.Filename)
-				continue
+				return nil, nil, nil, errors.New("file_url_missing")
 			}
 			data, mime, err := p.downloadAttachment(ctx, url)
 			if err != nil {
-				slog.Warn("max: file download failed", "error", err, "filename", a.Filename)
-				continue
+				return nil, nil, nil, errors.New("file_download_failed")
 			}
 			effectiveMime := mime
 			if effectiveMime == "" || effectiveMime == "application/octet-stream" {
@@ -1206,7 +1219,13 @@ func (p *Platform) fetchAttachments(ctx context.Context, atts []maxAttachmentRaw
 				})
 				continue
 			}
-			if strings.HasPrefix(effectiveMime, "audio/") && audio == nil {
+			if strings.HasPrefix(effectiveMime, "audio/") {
+				if len(data) == 0 {
+					return nil, nil, nil, errors.New("audio_empty")
+				}
+				if audio != nil {
+					return nil, nil, nil, errors.New("multiple_untranscribed_audio")
+				}
 				audio = &core.AudioAttachment{
 					MimeType: effectiveMime,
 					Data:     data,
@@ -1225,16 +1244,19 @@ func (p *Platform) fetchAttachments(ctx context.Context, atts []maxAttachmentRaw
 		case "audio":
 			url := a.Payload.URL
 			if url == "" {
-				url, _, _ = p.resolveMediaURL(ctx, a.Type, a.Payload.Token)
-			}
-			if url == "" {
-				slog.Warn("max: audio has no download URL")
-				continue
+				return nil, nil, nil, errors.New("audio_url_missing")
 			}
 			data, mime, err := p.downloadAttachment(ctx, url)
 			if err != nil {
-				slog.Warn("max: audio download failed", "error", err)
-				continue
+				return nil, nil, nil, errors.New("audio_download_failed")
+			}
+			if len(data) == 0 {
+				return nil, nil, nil, errors.New("audio_empty")
+			}
+			mediaType, _, _ := strings.Cut(strings.ToLower(mime), ";")
+			mediaType = strings.TrimSpace(mediaType)
+			if mediaType != "" && mediaType != "application/octet-stream" && !strings.HasPrefix(mediaType, "audio/") {
+				return nil, nil, nil, errors.New("audio_invalid_content_type")
 			}
 			if audio == nil {
 				audio = &core.AudioAttachment{
@@ -1242,6 +1264,8 @@ func (p *Platform) fetchAttachments(ctx context.Context, atts []maxAttachmentRaw
 					Data:     data,
 					Format:   audioFormatFromMime(mime, a.Filename),
 				}
+			} else {
+				return nil, nil, nil, errors.New("multiple_untranscribed_audio")
 			}
 		case "video":
 			url := a.Payload.URL
@@ -1249,13 +1273,11 @@ func (p *Platform) fetchAttachments(ctx context.Context, atts []maxAttachmentRaw
 				url, _, _ = p.resolveMediaURL(ctx, a.Type, a.Payload.Token)
 			}
 			if url == "" {
-				slog.Warn("max: video has no download URL")
-				continue
+				return nil, nil, nil, errors.New("video_url_missing")
 			}
 			data, mime, err := p.downloadAttachment(ctx, url)
 			if err != nil {
-				slog.Warn("max: video download failed", "error", err)
-				continue
+				return nil, nil, nil, errors.New("video_download_failed")
 			}
 			fname := a.Filename
 			files = append(files, core.FileAttachment{
@@ -1267,14 +1289,16 @@ func (p *Platform) fetchAttachments(ctx context.Context, atts []maxAttachmentRaw
 			slog.Debug("max: skipping unsupported attachment type", "type", a.Type)
 		}
 	}
-	return images, files, audio
+	return images, files, audio, nil
 }
 
 // audioFormatFromMime derives the short format hint ("ogg", "mp3", "m4a", …)
 // expected by core.AudioAttachment.Format. MAX voice messages are typically
 // ogg/opus; audio files uploaded via paperclip can be anything.
 func audioFormatFromMime(mime, filename string) string {
-	if mime != "" {
+	mime, _, _ = strings.Cut(mime, ";")
+	mime = strings.ToLower(strings.TrimSpace(mime))
+	if strings.HasPrefix(mime, "audio/") {
 		if i := strings.Index(mime, "/"); i >= 0 {
 			sub := mime[i+1:]
 			switch sub {
@@ -1330,17 +1354,16 @@ func (p *Platform) downloadAttachment(ctx context.Context, url string) ([]byte, 
 	return data, resp.Header.Get("Content-Type"), nil
 }
 
-// resolveMediaURL asks MAX for the playable/downloadable URL of a video or
-// audio attachment. MAX delivers only an opaque token in the message payload
-// and exposes /videos/{token} and /audios/{token} for resolution.
+// resolveMediaURL resolves a video token through the documented Bot API.
+// Audio must use its incoming payload.url; its token is only for reuse.
 func (p *Platform) resolveMediaURL(ctx context.Context, kind, token string) (string, string, error) {
+	if kind != "video" {
+		return "", "", errors.New("media_token_resolution_unsupported")
+	}
 	if token == "" {
 		return "", "", fmt.Errorf("empty token")
 	}
 	endpoint := "/videos/"
-	if kind == "audio" {
-		endpoint = "/audios/"
-	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.apiBase+endpoint+token, nil)
 	if err != nil {
 		return "", "", err

@@ -2794,6 +2794,10 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		e.handleMessageRecall(p, msg)
 		return
 	}
+	if msg.InputError != "" {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(msg.InputError))
+		return
+	}
 
 	slog.Info("message received",
 		"platform", msg.Platform, "msg_id", msg.MessageID,
@@ -3309,6 +3313,9 @@ func (e *Engine) handleVoiceMessage(p Platform, msg *Message) {
 	// Replace audio with transcribed text and re-dispatch
 	msg.Audio = nil
 	msg.Content = text
+	if caption := strings.TrimSpace(audio.Caption); caption != "" {
+		msg.Content = caption + "\n" + text
+	}
 	msg.FromVoice = true
 	e.handleMessage(p, msg)
 }

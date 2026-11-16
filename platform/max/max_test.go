@@ -272,9 +272,10 @@ func (m *mockAPI) handleUploads(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCDN mimics per-kind MAX CDN response shapes:
-//   image: {"photos": {"<id>": {"token": "..."}}}
-//   file:  {"token": "..."}
-//   video/audio: XML "<retval>1</retval>" (token comes from /uploads instead)
+//
+//	image: {"photos": {"<id>": {"token": "..."}}}
+//	file:  {"token": "..."}
+//	video/audio: XML "<retval>1</retval>" (token comes from /uploads instead)
 func (m *mockAPI) handleCDN(w http.ResponseWriter, r *http.Request) {
 	atomic.AddInt32(&m.cdnCalls, 1)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
@@ -565,7 +566,10 @@ func TestAudioFormatFromMime(t *testing.T) {
 		{"audio/webm", "voice.webm", "webm"},
 		{"", "clip.m4a", "m4a"},
 		{"", "weird_no_ext", "ogg"},
-		{"application/octet-stream", "", "octet-stream"},
+		{"application/octet-stream", "", "ogg"},
+		{"application/octet-stream", "voice.wav", "wav"},
+		{"audio/ogg; codecs=opus", "", "ogg"},
+		{"Audio/MPEG; charset=binary", "", "mp3"},
 	}
 	for _, c := range cases {
 		if got := audioFormatFromMime(c.mime, c.filename); got != c.want {
@@ -580,9 +584,12 @@ func TestFetchAttachmentsRoutesAudio(t *testing.T) {
 	p := newTestPlatform(t, m.server.URL)
 
 	atts := []maxAttachmentRaw{
-		{Type: "audio", Payload: maxAttachmentPayld{Token: "vm-abc"}},
+		{Type: "audio", Payload: maxAttachmentPayld{URL: m.server.URL + "/blob/vm-abc"}},
 	}
-	images, files, audio := p.fetchAttachments(context.Background(), atts)
+	images, files, audio, err := p.fetchAttachments(context.Background(), atts)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(images) != 0 || len(files) != 0 {
 		t.Errorf("audio must not leak into images/files (img=%d, f=%d)", len(images), len(files))
 	}
@@ -610,7 +617,10 @@ func TestFetchAttachmentsFileWithAudioMimeRoutesToAudio(t *testing.T) {
 	atts := []maxAttachmentRaw{
 		{Type: "file", Filename: "song.mp3", Payload: maxAttachmentPayld{URL: server.URL + "/song.mp3"}},
 	}
-	_, files, audio := p.fetchAttachments(context.Background(), atts)
+	_, files, audio, err := p.fetchAttachments(context.Background(), atts)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(files) != 0 {
 		t.Errorf("audio/* mime should not be in files, got %+v", files)
 	}

@@ -80,3 +80,84 @@ func TestNativeTranscriptHonorsUserAllowList(t *testing.T) {
 		Body: maxBody{Mid: "unauthorized-voice", Attachments: []maxAttachmentRaw{{Type: "audio", Transcription: json.RawMessage(`"Тест голоса"`)}}},
 	})
 }
+
+func TestMissingAudioDoesNotDeliverCaptionAsSuccessfulInput(t *testing.T) {
+	var undocumentedRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if len(r.URL.Path) >= len("/audios/") && r.URL.Path[:len("/audios/")] == "/audios/" {
+			undocumentedRequests.Add(1)
+		}
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer server.Close()
+	p := newTestPlatform(t, server.URL)
+	var received *core.Message
+	p.handler = func(_ core.Platform, msg *core.Message) { received = msg }
+	p.handleMessage(context.Background(), &maxMessage{
+		Timestamp: time.Now().UnixMilli(), Sender: maxUser{UserID: 99}, Recipient: maxRecipient{ChatID: 555},
+		Body: maxBody{Mid: "missing-audio", Text: "Поясни голосовое", Attachments: []maxAttachmentRaw{{Type: "audio", Payload: maxAttachmentPayld{Token: "opaque-token"}}}},
+	})
+	if received == nil || received.Content != "" || received.InputError != core.MsgInputMediaError {
+		t.Fatalf("missing audio must produce an input failure, not a caption-only prompt: %#v", received)
+	}
+	if undocumentedRequests.Load() != 0 {
+		t.Fatal("attempted an undocumented audio-token endpoint")
+	}
+}
+
+func TestRawAudioKeepsCaptionSeparateFromRecognition(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "audio/ogg; codecs=opus")
+		_, _ = w.Write([]byte("OggS-test-bytes"))
+	}))
+	defer server.Close()
+	p := newTestPlatform(t, server.URL)
+	var received *core.Message
+	p.handler = func(_ core.Platform, msg *core.Message) { received = msg }
+	p.handleMessage(context.Background(), &maxMessage{
+		Timestamp: time.Now().UnixMilli(), Sender: maxUser{UserID: 99}, Recipient: maxRecipient{ChatID: 555},
+		Body: maxBody{Mid: "audio-caption", Text: "Моя подпись", Attachments: []maxAttachmentRaw{{Type: "audio", Payload: maxAttachmentPayld{URL: server.URL + "/voice"}}}},
+	})
+	if received == nil || received.Content != "" || received.Audio == nil || received.Audio.Caption != "Моя подпись" || received.Audio.Format != "ogg" {
+		t.Fatalf("raw caption can be mistaken for recognition: %#v", received)
+	}
+}
+
+func TestAudioDownloadFailureNeverForwardsPartialRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+	p := newTestPlatform(t, server.URL)
+	var received *core.Message
+	p.handler = func(_ core.Platform, msg *core.Message) { received = msg }
+	p.handleMessage(context.Background(), &maxMessage{
+		Timestamp: time.Now().UnixMilli(), Sender: maxUser{UserID: 99}, Recipient: maxRecipient{ChatID: 555},
+		Body: maxBody{Mid: "audio-error", Text: "Подпись", Attachments: []maxAttachmentRaw{{Type: "audio", Payload: maxAttachmentPayld{URL: server.URL + "/voice?secret=must-not-escape"}}}},
+	})
+	if received == nil || received.InputError != core.MsgInputMediaError || received.Content != "" || received.Audio != nil {
+		t.Fatalf("download failure forwarded partial content: %#v", received)
+	}
+}
+
+func TestAudioEmptyOrNonAudioResponseIsRejected(t *testing.T) {
+	for _, tc := range []struct {
+		name, contentType, body string
+	}{
+		{"empty", "audio/ogg", ""},
+		{"html", "text/html", "<html>Denied</html>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", tc.contentType)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			p := newTestPlatform(t, server.URL)
+			_, _, audio, err := p.fetchAttachments(context.Background(), []maxAttachmentRaw{{Type: "audio", Payload: maxAttachmentPayld{URL: server.URL}}})
+			if err == nil || audio != nil {
+				t.Fatalf("bad media reached STT: audio=%#v error=%v", audio, err)
+			}
+		})
+	}
+}

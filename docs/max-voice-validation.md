@@ -39,6 +39,24 @@
 
 ## Источники
 
+## Следующий checkpoint: ошибки вложений и размещение
+
+- Регрессия показала caption-only ошибку при `audio` без URL: предыдущий код терял аудио и передавал подпись как успешный запрос. Теперь ошибка входа передаётся каноническому Engine как `Message.InputError`; пользователь получает локализованное сообщение, агент не запускается. Повреждённые/недоступные вложения не превращаются в частичный запрос; signed URL не входит в reason лога.
+- `AudioAttachment.Caption` отделяет авторскую подпись от recognition text. MAX передаёт её отдельно; при настроенном STT Engine сохраняет подпись вместе с результатом. При выключенном STT подпись не подменяет распознавание. Недокументированный audio-token endpoint исключён. Нормализуются MIME с параметрами; пустой audio, HTML вместо audio и несколько нерасшифрованных audio отклоняются.
+- Проверки: core 26,885 с, Codex 14,207 с; финальный MAX 8,443 с; vet core/Codex/MAX прошёл; отдельный CUJ 3,503 с. CUJ-A4 теперь покрывает три действия пользователя: ошибка получения → raw voice без STT → готовый transcript с ответом. Дополнительный тест проверяет сохранение caption после STT. Это офлайн-проверки; исходная запись ещё не прошла live pipeline.
+- После ответа пользователя «существующего адреса нет, подбери размещение» сравнены актуальные официальные документы. KeenDNS: бесплатный постоянный адрес и проксирование локальных web-приложений даже при private WAN IP; пригодность конкретной конфигурации для MAX HTTPS:443/POST/secret-header требует проверки. На локальном gateway `192.168.1.1` получена страница `KeeneticOS Web Panel`, запрос версии требует авторизации (401). Настройки не менялись, пароль не подбирался.
+- CloudPub: бесплатный постоянный поддомен, автоматический SSL, Windows client, заявленный тарифный трафик 250 ГБ/месяц. ngrok: бесплатный статический dev domain, 20 000 HTTP запросов/месяц и 1 ГБ; нужен аккаунт. Cloudflare Quick Tunnel временный и не предназначен для production, полноценный Tunnel требует домен. VPS — платный отдельный сервер; сохранённый Windows-Codex всё равно зависит от доступности ПК, если не переносить выполнение. Никакие аккаунты, DNS, подписки и внешние публикации не создавались.
+
+Рекомендуемый следующий read-only этап — проверить настройки KeenDNS через штатный интерфейс роутера; затем подготовить отдельный webhook hostname на Windows и проверить реальный POST с заголовком секрета перед переключением бота. Выбор маршрута не доказывает исправление исходной аудиодоставки.
+
+Дополнительные источники:
+
+- [KeenDNS: локальные web-приложения](https://support.keenetic.com/carrier-dsl/kn-2111/en/15884-remote-access-to-home-network-resources-with-dns.html).
+- [CloudPub: тарифы](https://cloudpub.ru/plans/), [HTTP/HTTPS](https://cloudpub.ru/docs/http).
+- [ngrok: постоянный dev domain](https://ngrok.com/docs/gateway/domains), [лимиты](https://ngrok.com/docs/pricing-limits).
+- [Cloudflare Quick Tunnel](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/).
+- [MAX: webhook HTTPS:443 и secret-header](https://dev.max.ru/docs-api/methods/POST/subscriptions).
+
 - [MAX Message](https://dev.max.ru/docs-api/objects/Message).
 - [Официальная схема MAX](https://github.com/max-messenger/api-schema/blob/main/schema.yaml).
 - [MAX Updates](https://dev.max.ru/docs-api/objects/Update/).
