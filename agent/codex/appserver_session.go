@@ -255,11 +255,11 @@ func newAppServerSession(ctx context.Context, url, workDir, model, effort, mode,
 	return s, nil
 }
 
-func (s *appServerSession) connect() error {
-	args := append(append([]string(nil), s.cliExtraArgs...), "app-server")
-	if strings.TrimSpace(s.url) != "" {
-		args = append(args, "--listen", strings.TrimSpace(s.url))
-	}
+func (s *appServerSession) appServerArgs() []string {
+	// Codex's global -c list is replaced when another -c appears after the
+	// subcommand (verified with CLI 0.160.1 config/read). Keep configured and
+	// generated overrides in the same scope so feature flags are preserved.
+	args := append([]string(nil), s.cliExtraArgs...)
 	if model := strings.TrimSpace(s.model); model != "" {
 		args = append(args, "-c", fmt.Sprintf("model=%q", model))
 	}
@@ -272,6 +272,15 @@ func (s *appServerSession) connect() error {
 	if baseURL := strings.TrimSpace(s.baseURL); baseURL != "" {
 		args = append(args, "-c", fmt.Sprintf("openai_base_url=%q", baseURL))
 	}
+	args = append(args, "app-server")
+	if strings.TrimSpace(s.url) != "" {
+		args = append(args, "--listen", strings.TrimSpace(s.url))
+	}
+	return args
+}
+
+func (s *appServerSession) connect() error {
+	args := s.appServerArgs()
 	cliBin := s.cliBin
 	if cliBin == "" {
 		cliBin = "codex"
