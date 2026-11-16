@@ -19,11 +19,25 @@ FORMATS = {"mp3", "mp4", "m4a", "wav", "webm", "ogg", "opus", "mpeg", "mpga"}
 
 
 def recognize(args: argparse.Namespace, audio: bytes, audio_format: str) -> dict[str, object]:
+    if audio_format not in FORMATS or not 0 < len(audio) <= MAX_AUDIO_BYTES:
+        raise ValueError("Invalid audio format or size")
+    digest = hashlib.sha256(audio).hexdigest()
+    root: pathlib.Path | None = None
+    if args.evidence_dir is not None:
+        root = args.evidence_dir.resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / (digest + "." + audio_format)
+        try:
+            with path.open("xb") as stream:
+                stream.write(audio)
+        except FileExistsError:
+            if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+                raise ValueError("Existing evidence file identity mismatch") from None
+    # Keep explicitly requested diagnostic audio even when model loading,
+    # dependency import, or recognition fails. This is not webhook admission.
     model_dir = args.model_dir.resolve()
     if not (model_dir / "model.bin").is_file():
         raise ValueError("The specified local model is not cached")
-    if audio_format not in FORMATS or not 0 < len(audio) <= MAX_AUDIO_BYTES:
-        raise ValueError("Invalid audio format or size")
     # These overrides apply only to this subprocess, never the Hermes gateway.
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
@@ -33,7 +47,6 @@ def recognize(args: argparse.Namespace, audio: bytes, audio_format: str) -> dict
     sys.path.insert(0, str(args.hermes_dir.resolve()))
     from tools.transcription_tools import transcribe_audio_local_fallback
 
-    digest = hashlib.sha256(audio).hexdigest()
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="cc-connect-stt-") as directory:
         path = pathlib.Path(directory) / ("audio." + audio_format)
@@ -50,13 +63,7 @@ def recognize(args: argparse.Namespace, audio: bytes, audio_format: str) -> dict
         "format": audio_format,
         "elapsed_seconds": time.monotonic() - started,
     }
-    if args.evidence_dir is not None:
-        root = args.evidence_dir.resolve()
-        root.mkdir(parents=True, exist_ok=True)
-        path = root / (digest + "." + audio_format)
-        if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() != digest:
-            raise ValueError("Existing evidence file identity mismatch")
-        path.write_bytes(audio)
+    if root is not None:
         (root / (digest + ".json")).write_text(json.dumps(evidence, ensure_ascii=False), encoding="utf-8")
     return evidence
 

@@ -9,6 +9,28 @@ import unittest
 
 
 class HermesCommandTransportTests(unittest.TestCase):
+    def test_backend_failure_retains_input_for_recovery(self):
+        for backend in ["return {'success':False}", "raise RuntimeError('PRIVATE-PROVIDER-DETAILS')"]:
+            with self.subTest(backend=backend), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                tools = root / "tools"
+                tools.mkdir()
+                (tools / "__init__.py").write_text("", encoding="utf-8")
+                (tools / "transcription_tools.py").write_text(
+                    "def transcribe_audio_local_fallback(path, model):\n    " + backend + "\n", encoding="utf-8")
+                (root / "model.bin").write_bytes(b"unit-model-fixture")
+                completed = subprocess.run(
+                    [sys.executable, str(pathlib.Path(__file__).with_name("hermes_local_stt.py")),
+                     "--hermes-dir", str(root), "--model-dir", str(root), "--evidence-dir", str(root / "evidence")],
+                    input=b"recoverable-unit-audio", capture_output=True, timeout=10,
+                    env={**os.environ, "CC_CONNECT_STT_FORMAT": "mp3"}, check=False)
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertEqual(completed.stdout, b"")
+                self.assertNotIn(b"PRIVATE-PROVIDER-DETAILS", completed.stderr)
+                files = list((root / "evidence").glob("*.mp3"))
+                self.assertEqual(len(files), 1)
+                self.assertEqual(files[0].read_bytes(), b"recoverable-unit-audio")
+
     def test_recognition_contract_and_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

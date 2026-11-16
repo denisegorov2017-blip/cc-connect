@@ -52,7 +52,10 @@ including its language and silence/hallucination filtering.
 Audio is normally processed in an automatically removed temporary directory.
 For a deliberately recorded diagnostic, `--evidence-dir C:\diagnostics\voice`
 retains the input audio and a JSON report with its SHA256, transcript, byte count,
-and recognition-call duration. Keep that directory outside the repository.
+and recognition-call duration. Audio is retained before model loading and
+recognition; on failure the audio remains, but no success report is written.
+This diagnostic copy is not a durable webhook queue or automatic replay.
+Keep that directory outside the repository.
 This timing excludes subprocess startup and the subsequent agent turn.
 
 The example transport tests mock only the Hermes recognizer and do not establish
