@@ -5687,8 +5687,9 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			var statusFooter string
 			var legacyStatusFooter string
 			if !isSilent {
-				footerContext := replyFooterContextText(replyFooterSessionContextUsage(state.agentSession), e.i18n)
-				if e.showContextIndicator {
+				actualContext := replyFooterSessionContextUsage(state.agentSession)
+				footerContext := replyFooterContextText(actualContext, e.i18n)
+				if e.showContextIndicator && actualContext == nil {
 					if sdkPlausible {
 						if text := contextIndicatorText(event.InputTokens); text != "" {
 							footerContext = text
@@ -5716,6 +5717,10 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				"turn_duration", turnDuration,
 				"input_tokens", event.InputTokens,
 				"output_tokens", event.OutputTokens,
+				"cached_input_tokens", event.CacheReadInputTokens,
+				"usage_reported", event.Metadata["token_usage_reported"],
+				"turn_token_usage", event.Metadata["turn_token_usage"],
+				"session_token_usage", event.Metadata["session_token_usage"],
 				"silent", isSilent,
 			)
 			// DEBUG: full assistant response for in-depth debugging.
