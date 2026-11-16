@@ -1040,9 +1040,11 @@ func (p *Platform) poll(ctx context.Context, marker *int64) (*int64, error) {
 func (p *Platform) handleUpdate(ctx context.Context, upd *maxUpdate) {
 	switch upd.UpdateType {
 	case "message_created":
-		if upd.Message != nil {
-			p.handleMessage(ctx, upd.Message)
+		if upd.Message == nil {
+			slog.Warn("max: incomplete message update", "reason", "missing_message")
+			return
 		}
+		p.handleMessage(ctx, upd.Message)
 	case "message_callback":
 		if upd.Callback != nil {
 			cb := *upd.Callback
