@@ -2359,6 +2359,86 @@ func TestCUJ_STREAM1_StreamingResumesAfterPermissionPrompt(t *testing.T) {
 	}
 }
 
+// Question buttons must remain controls, including after /new, rather than
+// becoming text sent into the replacement conversation.
+type cujQuestionPlatform struct {
+	stubPlatformEngine
+	menus chan [][]ButtonOption
+}
+
+func (p *cujQuestionPlatform) SendWithButtons(_ context.Context, _ any, text string, rows [][]ButtonOption) error {
+	p.mu.Lock()
+	p.sent = append(p.sent, text)
+	p.mu.Unlock()
+	p.menus <- rows
+	return nil
+}
+
+type cujQuestionSession struct {
+	controllableAgentSession
+}
+
+func (s *cujQuestionSession) Send(_ string, _ string, _ []ImageAttachment, _ []FileAttachment) error {
+	s.events <- Event{Type: EventPermissionRequest, ToolName: "AskUserQuestion", RequestID: "rpc-reused-between-processes", Questions: testMultiQuestions()}
+	return nil
+}
+
+func (s *cujQuestionSession) RespondPermission(_ string, result PermissionResult) error {
+	answers := result.UpdatedInput["answers"].(map[string]any)
+	s.events <- Event{Type: EventResult, Content: "confirmed " + s.sessionID + ": " + fmt.Sprint(answers["Which database?"], "/", answers["Which framework?"]), Done: true}
+	return nil
+}
+
+func TestCUJ_Q1_QuestionButtonsStayWithOriginalSession(t *testing.T) {
+	p := &cujQuestionPlatform{stubPlatformEngine: stubPlatformEngine{n: "test"}, menus: make(chan [][]ButtonOption, 8)}
+	next := 0
+	a := &controllableAgent{startSessionFn: func(context.Context, string) (AgentSession, error) {
+		next++
+		return &cujQuestionSession{controllableAgentSession: controllableAgentSession{sessionID: fmt.Sprintf("thread-%d", next), alive: true, events: make(chan Event, 8), closed: make(chan struct{})}}, nil
+	}}
+	e := NewEngine("questions", a, []Platform{p}, filepath.Join(t.TempDir(), "sessions.json"), LangEnglish)
+	t.Cleanup(func() { _ = e.Stop() })
+	send := func(text string, callback bool) {
+		e.ReceiveMessage(p, &Message{SessionKey: "test:owner", Platform: "test", UserID: "owner", Content: text, ReplyCtx: "ctx", IsPermissionResponse: callback})
+	}
+	menu := func() [][]ButtonOption {
+		t.Helper()
+		select {
+		case rows := <-p.menus:
+			return rows
+		case <-time.After(3 * time.Second):
+			t.Fatal("question buttons not delivered")
+			return nil
+		}
+	}
+	waitReply := func(text string) {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			if strings.Contains(strings.Join(p.getSent(), "\n"), text) {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("missing user-visible reply %q: %v", text, p.getSent())
+	}
+	send("ask two questions", false)
+	first := menu()[0][0].Data
+	send(first, true)
+	second := menu()[1][0].Data
+	send(first, true) // repeated previous question must not choose for question 2
+	send(second, true)
+	waitReply("confirmed thread-1: PostgreSQL/Echo")
+	send("/new", false)
+	send("ask again", false)
+	newFirst := menu()[1][0].Data
+	send(second, true) // stale card from thread-1 must not answer thread-2
+	send(newFirst, true)
+	newSecond := menu()[0][0].Data
+	send(newSecond, true)
+	waitReply("confirmed thread-2: SQLite/Gin")
+}
+
 func TestCUJ_H4_FeishuTopicsKeepWorkspaceBindingsIsolated(t *testing.T) {
 	baseDir := t.TempDir()
 	defaultWorkspace := normalizeWorkspacePath(filepath.Join(baseDir, "workspace-default"))

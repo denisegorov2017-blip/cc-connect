@@ -274,6 +274,29 @@ func TestAppServerSession_HandleRequestUserInputEmitsAskQuestion(t *testing.T) {
 	}
 }
 
+func TestAppServerSession_RequestUserInputCannotCrossThreadOrTurn(t *testing.T) {
+	for _, ids := range [][2]string{{"child-thread", "turn-1"}, {"thread-1", "old-turn"}} {
+		t.Run(ids[0]+"/"+ids[1], func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			stdin := &lockedWriteCloser{}
+			s := &appServerSession{ctx: ctx, stdin: stdin, events: make(chan core.Event, 4), pendingApprovals: make(map[string]chan core.PermissionResult), currentTurn: "turn-1"}
+			s.threadID.Store("thread-1")
+			s.handleServerRequest(serverRequestProbe(t, `"foreign-question"`, "item/tool/requestUserInput", map[string]any{
+				"threadId": ids[0], "turnId": ids[1], "questions": []any{map[string]any{"id": "q", "question": "Other thread?"}},
+			}))
+			select {
+			case event := <-s.events:
+				t.Fatalf("foreign request surfaced in parent chat: %#v", event)
+			default:
+			}
+			if stdin.String() == "" {
+				t.Fatal("foreign request left unresolved")
+			}
+		})
+	}
+}
+
 func TestAppServerSession_HandleRequestUserInputWritesCodexResponse(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

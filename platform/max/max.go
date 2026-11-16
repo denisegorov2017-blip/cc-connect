@@ -549,6 +549,10 @@ func (p *Platform) SendAudio(ctx context.Context, replyCtx any, audio []byte, fo
 
 // UpdateMessage implements core.MessageUpdater via PUT /messages?message_id=.
 func (p *Platform) UpdateMessage(ctx context.Context, replyCtx any, content string) error {
+	return p.updateMessage(ctx, replyCtx, content, false)
+}
+
+func (p *Platform) updateMessage(ctx context.Context, replyCtx any, content string, clearButtons bool) error {
 	rctx, ok := replyCtx.(replyContext)
 	if !ok {
 		return fmt.Errorf("max: unexpected replyCtx type %T", replyCtx)
@@ -559,7 +563,11 @@ func (p *Platform) UpdateMessage(ctx context.Context, replyCtx any, content stri
 	if len([]rune(content)) > 4000 {
 		return fmt.Errorf("max: update message: text exceeds 4000 characters")
 	}
-	body := maxSendBody{Text: content, Format: "markdown"}
+	body := map[string]any{"text": content, "format": "markdown"}
+	if clearButtons {
+		// Omitted/null preserves MAX attachments; only [] removes the keyboard.
+		body["attachments"] = []any{}
+	}
 	data, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -1482,6 +1490,9 @@ func (p *Platform) handleCallback(ctx context.Context, cb *maxCallback) {
 	content := strings.TrimPrefix(payload, "cmd:")
 	isPerm := strings.HasPrefix(payload, "askq:")
 	choice := ""
+	if isPerm && cb.buttonLabel != "" {
+		choice = "✓ " + cb.buttonLabel
+	}
 	if d, ok := permPayloads[payload]; ok {
 		content, choice, isPerm = d.token, d.label, true
 		if cb.buttonLabel != "" {
@@ -1504,7 +1515,7 @@ func (p *Platform) handleCallback(ctx context.Context, cb *maxCallback) {
 		if origText == "" {
 			origText = "⚠️"
 		}
-		if err := p.UpdateMessage(ctx, rctx, origText+"\n\n"+choice); err != nil {
+		if err := p.updateMessage(ctx, rctx, origText+"\n\n"+choice, true); err != nil {
 			// 403/404 means the chat is gone — the user left between the message
 			// and the press. That is worth noticing; a transient blip is not.
 			if e := err.Error(); strings.Contains(e, "403") || strings.Contains(e, "404") {

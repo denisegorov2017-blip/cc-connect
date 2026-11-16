@@ -434,6 +434,10 @@ type PermissionResult struct {
 }
 
 // ToolAuthorizer is an optional interface for agents that support dynamic tool authorization.
+type UserInputSteerer interface {
+	SteerUserInput(prompt string) (bool, error)
+}
+
 type ToolAuthorizer interface {
 	AddAllowedTools(tools ...string) error
 	GetAllowedTools() []string
