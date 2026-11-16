@@ -3,6 +3,7 @@ package core
 // Russian covers the chat menus and their immediate feedback. Other messages
 // use the existing English fallback until their translations are added.
 var russianMessages = map[MsgKey]string{
+	MsgInputMediaError:               "Не удалось прочитать вложение. Запрос не передан агенту. Повторите попытку позже.",
 	MsgElapsedSeconds:                "%.1f с",
 	MsgElapsedMinutes:                "%d мин %02d с",
 	MsgElapsedHours:                  "%d ч %02d мин",
