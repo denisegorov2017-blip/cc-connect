@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -39,6 +40,7 @@ const (
 	stableConnectionWindow  = 10 * time.Second
 	typingInterval          = 4 * time.Second
 	maxAttachmentBytes      = 25 * 1024 * 1024 // 25 MiB cap per downloaded attachment
+	maxWebhookBytes         = 4 * 1024 * 1024
 	attachmentDownloadTO    = 60 * time.Second
 	attachmentUploadTO      = 5 * time.Minute
 	// attachmentReadyDelay is the pause between CDN upload and POST /messages.
@@ -272,19 +274,30 @@ func (p *Platform) startWebhook(ctx context.Context) error {
 		Addr:              p.webhookListen,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    16 * 1024,
+	}
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", p.webhookListen)
+	if err != nil {
+		return fmt.Errorf("listen: %w", err)
 	}
 	// Caller (Start) already holds p.mu, so assign directly — re-locking
 	// a non-reentrant sync.RWMutex would deadlock.
 	p.webServer = srv
 
 	go func() {
-		slog.Info("max: webhook listening", "addr", p.webhookListen, "path", p.webhookPath, "url", p.webhookURL)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		slog.Info("max: webhook listening", "addr", listener.Addr().String(), "path", p.webhookPath, "url", p.webhookURL)
+		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			slog.Error("max: webhook listener stopped", "err", err)
 		}
 	}()
 
 	if err := p.subscribe(ctx, p.webhookURL); err != nil {
+		_ = srv.Close()
+		_ = listener.Close()
+		p.webServer = nil
 		return fmt.Errorf("subscribe: %w", err)
 	}
 	slog.Info("max: webhook subscribed", "url", p.webhookURL)
@@ -355,15 +368,20 @@ func (p *Platform) webhookHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	defer r.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(r.Body, 4*1024*1024))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxWebhookBytes))
 	if err != nil {
-		slog.Warn("max: webhook read body", "err", err)
-		w.WriteHeader(http.StatusBadRequest)
+		status := http.StatusBadRequest
+		var sizeError *http.MaxBytesError
+		if errors.As(err, &sizeError) {
+			status = http.StatusRequestEntityTooLarge
+		}
+		slog.Warn("max: webhook rejected", "reason", "body_read", "status", status)
+		w.WriteHeader(status)
 		return
 	}
 	var upd maxUpdate
 	if err := json.Unmarshal(body, &upd); err != nil {
-		slog.Warn("max: webhook unmarshal", "err", err, "body", string(body[:min(len(body), 256)]))
+		slog.Warn("max: webhook rejected", "reason", "invalid_json")
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}

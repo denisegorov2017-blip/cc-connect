@@ -37,8 +37,6 @@
 - Диагностика одноразового чтения `/updates` с ранее наблюдавшимся marker после native stop отклонена automatic approval review: `blocked by policy`, подробная причина отсутствует. Запрос не исполнился, raw queue не получена. Повтор альтернативным путём не делался. Проверен оставшийся старый child и отсутствующий parent; child остановлен по точному PID/path/creation и native task снова запущен. Рабочая сборка остаётся прежней.
 - Попытка переключить будущий режим Plan через штатный owner helper получила `The task has an active turn; wait for an idle boundary`; selector не изменён. Текущий turn остаётся Default. Архитектурная production-приёмка не заявлена; выполнено независимое ограниченное исправление известного формата transcript-first.
 
-## Источники
-
 ## Следующий checkpoint: ошибки вложений и размещение
 
 - Регрессия показала caption-only ошибку при `audio` без URL: предыдущий код терял аудио и передавал подпись как успешный запрос. Теперь ошибка входа передаётся каноническому Engine как `Message.InputError`; пользователь получает локализованное сообщение, агент не запускается. Повреждённые/недоступные вложения не превращаются в частичный запрос; signed URL не входит в reason лога.
@@ -49,6 +47,15 @@
 
 Рекомендуемый следующий read-only этап — проверить настройки KeenDNS через штатный интерфейс роутера; затем подготовить отдельный webhook hostname на Windows и проверить реальный POST с заголовком секрета перед переключением бота. Выбор маршрута не доказывает исправление исходной аудиодоставки.
 
+## Keenetic и локальная проверка webhook ingress, 16.11.2026
+
+- В авторизованном web UI подтверждены Keenetic Viva KN-1910, KeeneticOS 5.1.6, существующий KeenDNS с SSL, включённый прямой доступ и HTTPS-порт 443. WireGuard VPN-сервер и SSTP показывают «Работает». Новых web-приложений не добавляли; публикация, firewall, VPN, обновление роутера и подписка MAX не менялись. Точный проект маршрута хранится вне Git в `cc-connect-max-analysis/keenetic-probe/route-plan.json`. Ответ пользователя с вопросом о VPN не является разрешением на публикацию.
+- MAX требует достижимый HTTPS:443 endpoint; закрытый VPN сам по себе не предоставляет такой endpoint внешнему отправителю. Вариант VPS с очередью и закрытой связью через WireGuard предложен как архитектура, не выбран и не развёрнут. Публичный приёмник с сохранением перед ACK, ограниченной асинхронной обработкой и дедупликацией отделяет доступность доставки от доступности Windows. Существующие правила и подключения не переиспользуются без проверки области доступа.
+- Четыре регрессии воспроизвели дефекты: JSON с хвостом за лимитом 4 MiB получал 200 после усечения; malformed JSON записывался в лог вместе с payload; занятый порт не мешал успешному POST subscription; ошибка subscription сохраняла HTTP server. RED: `voice-webhook-ingress-red.log`, четыре провала.
+- Исправление локальное: TCP listener открывается до subscription; при отказе регистрации listener закрывается и поле server очищается. HTTP body ограничен через `MaxBytesReader` с 413 для превышения; ошибки чтения и JSON содержат только фиксированный reason, без тела запроса. Ограничены read/write/idle timeout и размер заголовков. Регрессия отказа подписки проверяет готовность listener в момент регистрации и освобождение того же порта после ошибки.
+- Проверки: полный MAX package 8,694 с успешно (`voice-webhook-max-final.log`); `go vet ./platform/max` и `git diff --check` успешно. Эти изменения ещё не установлены. Старое исключение для локального коммита действует; общий all-platform Windows gate не объявляется успешным.
+- Восстановление принятого события всё ещё НЕ РЕАЛИЗОВАНО: текущий handler отвечает 200 перед асинхронной обработкой, durable admission отсутствует, дедуп процессный. Исправления ingress не доказывают recovery, live TLS/POST/header forwarding или прохождение исходной записи. Production acceptance остаётся незавершённой.
+
 Дополнительные источники:
 
 - [KeenDNS: локальные web-приложения](https://support.keenetic.com/carrier-dsl/kn-2111/en/15884-remote-access-to-home-network-resources-with-dns.html).
@@ -56,6 +63,8 @@
 - [ngrok: постоянный dev domain](https://ngrok.com/docs/gateway/domains), [лимиты](https://ngrok.com/docs/pricing-limits).
 - [Cloudflare Quick Tunnel](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/).
 - [MAX: webhook HTTPS:443 и secret-header](https://dev.max.ru/docs-api/methods/POST/subscriptions).
+- [Keenetic: VPN для доступа к локальным ресурсам](https://support.keenetic.com/hero/kn-1013/en/13688-how-to-keep-your-local-network-safe.html).
+- [Stripe: общие практики очереди и защиты от повторов](https://docs.stripe.com/webhooks#best-practices-for-using-webhooks) — сравнительный источник, не контракт доставки MAX.
 
 - [MAX Message](https://dev.max.ru/docs-api/objects/Message).
 - [Официальная схема MAX](https://github.com/max-messenger/api-schema/blob/main/schema.yaml).
