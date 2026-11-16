@@ -903,6 +903,10 @@ type maxAttachmentRaw struct {
 	Type     string             `json:"type"`
 	Payload  maxAttachmentPayld `json:"payload"`
 	Filename string             `json:"filename,omitempty"`
+	// MAX puts the nullable transcript beside payload, not inside it.
+	// RawMessage permits invalid optional values to fall back to audio
+	// without rejecting the entire authenticated message.
+	Transcription json.RawMessage `json:"transcription,omitempty"`
 }
 
 type maxAttachmentPayld struct {
@@ -1084,7 +1088,17 @@ func (p *Platform) handleMessage(ctx context.Context, msg *maxMessage) {
 	// Fire-and-forget — must never block the routing flow.
 	go func() { _ = p.sendChatAction(ctx, chatID, "mark_seen") }()
 
-	images, files, audio := p.fetchAttachments(ctx, atts)
+	media, transcripts := separateNativeAudioTranscripts(atts)
+	for _, transcript := range transcripts {
+		if text != "" {
+			text += "\n"
+		}
+		text += transcript
+	}
+	if len(transcripts) > 0 {
+		slog.Info("max: native audio transcript selected", "source", "max", "count", len(transcripts))
+	}
+	images, files, audio := p.fetchAttachments(ctx, media)
 
 	if text == "" && audio == nil && (len(images) > 0 || len(files) > 0) {
 		switch {
@@ -1115,8 +1129,28 @@ func (p *Platform) handleMessage(ctx context.Context, msg *maxMessage) {
 		Images:     images,
 		Files:      files,
 		Audio:      audio,
+		FromVoice:  audio != nil || len(transcripts) > 0,
 		ReplyCtx:   rctx,
 	})
+}
+
+// separateNativeAudioTranscripts prevents a second download/STT pass for
+// audio MAX has already transcribed. Preserve the incoming slice and every
+// other attachment; null, blank, missing and non-string values retain audio.
+func separateNativeAudioTranscripts(atts []maxAttachmentRaw) ([]maxAttachmentRaw, []string) {
+	media := make([]maxAttachmentRaw, 0, len(atts))
+	var transcripts []string
+	for _, att := range atts {
+		var transcript string
+		if att.Type == "audio" && json.Unmarshal(att.Transcription, &transcript) == nil {
+			if transcript = strings.TrimSpace(transcript); transcript != "" {
+				transcripts = append(transcripts, transcript)
+				continue
+			}
+		}
+		media = append(media, att)
+	}
+	return media, transcripts
 }
 
 // fetchAttachments downloads every supported attachment from a MAX message
