@@ -21,6 +21,7 @@ type buttonMenu struct {
 	reply     replyContext
 	messageID string
 	actions   []string
+	labels    []string
 	decision  bool
 	expires   time.Time
 }
@@ -63,6 +64,7 @@ func (p *Platform) sendBoundButtons(ctx context.Context, replyCtx any, content s
 			menu.decision = menu.decision || strings.HasPrefix(b.Data, "perm:") || strings.HasPrefix(b.Data, "askq:")
 			payload := fmt.Sprintf("ui:%s:%d", nonce, len(menu.actions))
 			menu.actions = append(menu.actions, b.Data)
+			menu.labels = append(menu.labels, b.Text)
 			out = append(out, maxButton{Type: "callback", Text: b.Text, Payload: payload})
 		}
 		rows = append(rows, out)
@@ -132,6 +134,9 @@ func (p *Platform) resolveButton(cb *maxCallback) (replyContext, string, bool) {
 	action := menu.actions[index]
 	if action == "" {
 		return replyContext{}, "", false
+	}
+	if index < len(menu.labels) {
+		cb.buttonLabel = menu.labels[index]
 	}
 	if action != "cmd:/model" && action != "cmd:/reasoning" && action != "cmd:/list" && action != "cmd:/status" && action != "cmd:/workspace list" {
 		if strings.HasPrefix(action, "perm:") || strings.HasPrefix(action, "askq:") {

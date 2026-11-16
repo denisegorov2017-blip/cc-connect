@@ -920,10 +920,11 @@ type maxRecipient struct {
 }
 
 type maxCallback struct {
-	CallbackID string     `json:"callback_id"`
-	Payload    string     `json:"payload"`
-	User       maxUser    `json:"user"`
-	Message    maxMessage `json:"-"` // Populated from the update's top-level message.
+	buttonLabel string     // Bound, localized label from the original menu; never read from JSON.
+	CallbackID  string     `json:"callback_id"`
+	Payload     string     `json:"payload"`
+	User        maxUser    `json:"user"`
+	Message     maxMessage `json:"-"` // Populated from the update's top-level message.
 }
 
 type maxUpdatesResponse struct {
@@ -1406,6 +1407,12 @@ func (p *Platform) handleCallback(ctx context.Context, cb *maxCallback) {
 	choice := ""
 	if d, ok := permPayloads[payload]; ok {
 		content, choice, isPerm = d.token, d.label, true
+		if cb.buttonLabel != "" {
+			choice = "✓ " + cb.buttonLabel
+			if d.token == "deny" {
+				choice = "✕ " + cb.buttonLabel
+			}
+		}
 	}
 
 	handler := p.getHandler()
@@ -1418,7 +1425,7 @@ func (p *Platform) handleCallback(ctx context.Context, cb *maxCallback) {
 	if choice != "" && rctx.messageID != "" {
 		origText := cb.Message.Body.Text
 		if origText == "" {
-			origText = "(permission request)"
+			origText = "⚠️"
 		}
 		if err := p.UpdateMessage(ctx, rctx, origText+"\n\n"+choice); err != nil {
 			// 403/404 means the chat is gone — the user left between the message

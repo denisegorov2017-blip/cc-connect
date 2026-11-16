@@ -808,15 +808,19 @@ func (a *Agent) activeProviderCodexConfig() (name string, apiKey string, wireAPI
 func (a *Agent) PermissionModes() []core.PermissionModeInfo {
 	return []core.PermissionModeInfo{
 		{Key: "suggest", Name: "Suggest", NameZh: "建议",
+			NameKey: core.MsgModeSuggestName, DescKey: core.MsgModeSuggestDesc,
 			Desc:   "Read-only sandbox; on exec backend no prompts, on app_server backend asks for every tool call",
 			DescZh: "只读沙箱；exec 后端不弹审批，app_server 后端每次工具调用都会询问"},
 		{Key: "auto-edit", Name: "Auto Edit", NameZh: "自动编辑",
+			NameKey: core.MsgModeAutoEditName, DescKey: core.MsgModeAutoEditDesc,
 			Desc:   "Workspace-write sandbox, no approval prompts (alias of Full Auto)",
 			DescZh: "工作区可写沙箱，不弹审批（等同于全自动）"},
 		{Key: "full-auto", Name: "Full Auto", NameZh: "全自动",
+			NameKey: core.MsgModeFullAutoName, DescKey: core.MsgModeFullAutoDesc,
 			Desc:   "Workspace-write sandbox, no approval prompts",
 			DescZh: "工作区可写沙箱，不弹审批"},
 		{Key: "yolo", Name: "YOLO", NameZh: "YOLO 模式",
+			NameKey: core.MsgModeYoloName, DescKey: core.MsgModeYoloDesc,
 			Desc:   "Bypass all approvals and sandbox (DANGEROUS)",
 			DescZh: "跳过所有审批和沙箱（危险）"},
 	}

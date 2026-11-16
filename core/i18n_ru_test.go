@@ -64,3 +64,53 @@ func TestRussianMenusKeepStableCommands(t *testing.T) {
 		t.Fatalf("translated effort changed command: %#v", p.buttonRows)
 	}
 }
+
+func TestRussianButtonsAndMenuTitlesHaveTranslations(t *testing.T) {
+	buttonOrTitle := regexp.MustCompile(`(?:btn_|_btn|_button|placeholder|^card_title_|^card_(?:back|prev|next)$)`)
+	for key := range messages {
+		if buttonOrTitle.MatchString(string(key)) {
+			if translated, ok := russianMessages[key]; !ok || strings.TrimSpace(translated) == "" {
+				t.Errorf("untranslated button/menu label: %s", key)
+			}
+		}
+	}
+}
+
+type russianModeMenuAgent struct{ stubModelModeAgent }
+
+func (*russianModeMenuAgent) PermissionModes() []PermissionModeInfo {
+	return []PermissionModeInfo{
+		{Key: "suggest", Name: "Suggest", Desc: "Read-only", NameKey: MsgModeSuggestName, DescKey: MsgModeSuggestDesc},
+		{Key: "yolo", Name: "YOLO", Desc: "Dangerous", NameKey: MsgModeYoloName, DescKey: MsgModeYoloDesc},
+	}
+}
+
+func TestRussianModeMenuLocalizesLabelsWithoutChangingPermissionValues(t *testing.T) {
+	p := &stubInlineButtonPlatform{stubPlatformEngine: stubPlatformEngine{n: "inline"}}
+	e := NewEngine("test", &russianModeMenuAgent{}, []Platform{p}, "", LangRussian)
+	msg := &Message{SessionKey: "inline:chat:user", ReplyCtx: "ctx"}
+	e.cmdMode(p, msg, nil)
+	if p.buttonRows[0][0].Text != "Только чтение" || p.buttonRows[0][0].Data != "cmd:/mode suggest" {
+		t.Fatalf("read-only action changed: %#v", p.buttonRows)
+	}
+	if p.buttonRows[0][1].Text != "Без ограничений" || p.buttonRows[0][1].Data != "cmd:/mode yolo" {
+		t.Fatalf("unrestricted action changed: %#v", p.buttonRows)
+	}
+	if !strings.Contains(p.buttonContent, "ОПАСНО") {
+		t.Fatal("unrestricted mode lost its danger description")
+	}
+}
+
+func TestRussianReplyFooterUsesReadableLabels(t *testing.T) {
+	e := NewEngine("test", &stubAgent{}, nil, "", LangRussian)
+	e.replyFooterEnabled = true
+	e.showContextIndicator = true
+	agent := &stubFooterAgent{model: "gpt-6.1-terra", effort: "medium"}
+	session := &controllableAgentSession{contextUsage: &ContextUsage{InputTokens: 1000, OutputTokens: 12, CachedInputTokens: 10, ContextWindow: 10000, UsedTokens: 2000}}
+	footer := e.buildClaudeStatusLineFooter(agent, session, "")
+	for _, want := range []string{"gpt-6.1-terra", "глубина:Средняя", "ответ 12", "вход", "контекст 20%"} {
+		if !strings.Contains(footer, want) {
+			t.Errorf("footer missing %q: %s", want, footer)
+		}
+	}
+}

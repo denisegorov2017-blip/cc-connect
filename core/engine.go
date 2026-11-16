@@ -7156,7 +7156,7 @@ func (e *Engine) buildReplyFooter(agent Agent, session AgentSession, workspaceDi
 			hasStatus = true
 		}
 		if effort := replyFooterReasoningEffort(session, agent); effort != "" {
-			parts = append(parts, effort)
+			parts = append(parts, e.i18n.reasoningEffortLabel(effort))
 			hasStatus = true
 		}
 		if contextFirst {
@@ -7594,6 +7594,10 @@ func (e *Engine) buildClaudeStatusLineFooter(agent Agent, session AgentSession, 
 	if usage.CachedInputTokens == 0 && usage.CacheCreationInputTokens == 0 {
 		return ""
 	}
+	localizer := e.i18n
+	if localizer == nil {
+		localizer = NewI18n(LangEnglish)
+	}
 
 	var line1 string
 	if e.showContextIndicator {
@@ -7620,14 +7624,14 @@ func (e *Engine) buildClaudeStatusLineFooter(agent Agent, session AgentSession, 
 			line1Parts = append(line1Parts, model)
 		}
 		if effort := strings.TrimSpace(replyFooterReasoningEffort(session, agent)); effort != "" {
-			line1Parts = append(line1Parts, "effort:"+effort)
+			line1Parts = append(line1Parts, localizer.Tf(MsgFooterEffort, localizer.reasoningEffortLabel(effort)))
 		}
-		line1Parts = append(line1Parts, fmt.Sprintf("out %s", formatStatusTokenCount(usage.OutputTokens)))
-		line1Parts = append(line1Parts, fmt.Sprintf("in %s cw %s cr %s",
+		line1Parts = append(line1Parts, localizer.Tf(MsgFooterOutput, formatStatusTokenCount(usage.OutputTokens)))
+		line1Parts = append(line1Parts, localizer.Tf(MsgFooterInput,
 			formatStatusTokenCount(usage.InputTokens),
 			formatStatusTokenCount(usage.CacheCreationInputTokens),
 			formatStatusTokenCount(usage.CachedInputTokens)))
-		line1Parts = append(line1Parts, fmt.Sprintf("ctx %d%%", pct))
+		line1Parts = append(line1Parts, localizer.Tf(MsgFooterContext, pct))
 		line1 = strings.Join(line1Parts, " · ")
 	}
 
@@ -8540,7 +8544,7 @@ func (e *Engine) cmdStatus(p Platform, msg *Message) {
 		if ms, ok := agent.(ModeSwitcher); ok {
 			mode := ms.GetMode()
 			if mode != "" {
-				modeStr = e.i18n.Tf(MsgStatusMode, mode)
+				modeStr = e.i18n.Tf(MsgStatusMode, e.i18n.permissionModeName(mode, ms.PermissionModes()))
 			}
 		}
 		thinkingStr := e.i18n.T(MsgDisabledShort)
@@ -8965,7 +8969,7 @@ func (e *Engine) renderStatusCard(sessionKey string, userID string) *Card {
 	if ms, ok := agent.(ModeSwitcher); ok {
 		mode := ms.GetMode()
 		if mode != "" {
-			modeStr = e.i18n.Tf(MsgStatusMode, mode)
+			modeStr = e.i18n.Tf(MsgStatusMode, e.i18n.permissionModeName(mode, ms.PermissionModes()))
 		}
 	}
 	thinkingStr := e.i18n.T(MsgDisabledShort)
@@ -9161,7 +9165,7 @@ func (e *Engine) cmdLang(p Platform, msg *Message, args []string) {
 			{
 				{Text: "日本語", Data: "cmd:/lang ja"},
 				{Text: "Español", Data: "cmd:/lang es"},
-				{Text: "Auto", Data: "cmd:/lang auto"},
+				{Text: e.i18n.T(MsgLanguageAuto), Data: "cmd:/lang auto"},
 			},
 			{{Text: "Русский", Data: "cmd:/lang ru"}},
 		}
@@ -9923,31 +9927,20 @@ func (e *Engine) cmdMode(p Platform, msg *Message, args []string) {
 			current := switcher.GetMode()
 			modes := switcher.PermissionModes()
 			var sb strings.Builder
-			zhLike := e.i18n.IsZhLike()
 			for _, m := range modes {
 				suffix := ""
 				if m.Key == current {
-					if zhLike {
-						suffix = "（当前）"
-					} else {
-						suffix = " (current)"
-					}
+					suffix = e.i18n.T(MsgModeCurrentSuffix)
 				}
-				if zhLike {
-					sb.WriteString(fmt.Sprintf("**%s**%s — %s\n", m.NameZh, suffix, m.DescZh))
-				} else {
-					sb.WriteString(fmt.Sprintf("**%s**%s — %s\n", m.Name, suffix, m.Desc))
-				}
+				name, description := e.i18n.permissionModeLabels(m)
+				sb.WriteString(fmt.Sprintf("**%s**%s — %s\n", name, suffix, description))
 			}
 			sb.WriteString(e.modeUsageText(modes))
 
 			var buttons [][]ButtonOption
 			var row []ButtonOption
 			for _, m := range modes {
-				label := m.Name
-				if zhLike {
-					label = m.NameZh
-				}
+				label, _ := e.i18n.permissionModeLabels(m)
 				row = append(row, ButtonOption{Text: label, Data: "cmd:/mode " + m.Key})
 				if len(row) >= 2 {
 					buttons = append(buttons, row)
@@ -9975,20 +9968,15 @@ func (e *Engine) cmdMode(p Platform, msg *Message, args []string) {
 
 	modes := switcher.PermissionModes()
 	displayName := newMode
-	zhLike := e.i18n.IsZhLike()
 	for _, m := range modes {
 		if m.Key == newMode {
-			if zhLike {
-				displayName = m.NameZh
-			} else {
-				displayName = m.Name
-			}
+			displayName, _ = e.i18n.permissionModeLabels(m)
 			break
 		}
 	}
 	reply := fmt.Sprintf(e.i18n.T(MsgModeChanged), displayName)
 	if appliedLive {
-		reply += "\n\n(Current session updated immediately.)"
+		reply += e.i18n.T(MsgModeUpdatedLive)
 	}
 	e.reply(p, msg.ReplyCtx, reply)
 }
@@ -12897,7 +12885,7 @@ func (e *Engine) renderLangCard() *Card {
 
 	langs := []struct{ code, label string }{
 		{"en", "English"}, {"zh", "中文"}, {"zh-TW", "繁體中文"},
-		{"ja", "日本語"}, {"es", "Español"}, {"ru", "Русский"}, {"auto", "Auto"},
+		{"ja", "日本語"}, {"es", "Español"}, {"ru", "Русский"}, {"auto", e.i18n.T(MsgLanguageAuto)},
 	}
 	var opts []CardSelectOption
 	initVal := ""
@@ -13031,28 +13019,20 @@ func (e *Engine) renderModeCard() *Card {
 
 	current := switcher.GetMode()
 	modes := switcher.PermissionModes()
-	zhLike := e.i18n.IsZhLike()
-
 	var sb strings.Builder
 	for _, m := range modes {
 		marker := "◻"
 		if m.Key == current {
 			marker = "▶"
 		}
-		if zhLike {
-			sb.WriteString(fmt.Sprintf("%s **%s** — %s\n", marker, m.NameZh, m.DescZh))
-		} else {
-			sb.WriteString(fmt.Sprintf("%s **%s** — %s\n", marker, m.Name, m.Desc))
-		}
+		name, description := e.i18n.permissionModeLabels(m)
+		sb.WriteString(fmt.Sprintf("%s **%s** — %s\n", marker, name, description))
 	}
 
 	var opts []CardSelectOption
 	initVal := ""
 	for _, m := range modes {
-		label := m.Name
-		if zhLike {
-			label = m.NameZh
-		}
+		label, _ := e.i18n.permissionModeLabels(m)
 		val := "act:/mode " + m.Key
 		opts = append(opts, CardSelectOption{Text: label, Value: val})
 		if m.Key == current {
@@ -14550,11 +14530,11 @@ func (e *Engine) renderHeartbeatCard() *Card {
 
 	var actionBtns []CardButton
 	if st.Paused {
-		actionBtns = append(actionBtns, PrimaryBtn("▶️ Resume", "act:/heartbeat resume"))
+		actionBtns = append(actionBtns, PrimaryBtn(e.i18n.T(MsgHeartbeatBtnResume), "act:/heartbeat resume"))
 	} else {
-		actionBtns = append(actionBtns, DefaultBtn("⏸ Pause", "act:/heartbeat pause"))
+		actionBtns = append(actionBtns, DefaultBtn(e.i18n.T(MsgHeartbeatBtnPause), "act:/heartbeat pause"))
 	}
-	actionBtns = append(actionBtns, DefaultBtn("💓 Run Now", "act:/heartbeat run"))
+	actionBtns = append(actionBtns, DefaultBtn(e.i18n.T(MsgHeartbeatBtnRun), "act:/heartbeat run"))
 	cb.Buttons(actionBtns...)
 
 	cb.Buttons(e.cardBackButton())

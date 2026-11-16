@@ -104,6 +104,26 @@ func TestUnboundDecisionCallbackIsRejected(t *testing.T) {
 	}
 }
 
+func TestDecisionCallbackPreservesBoundRussianLabel(t *testing.T) {
+	p := newTestPlatform(t, "http://127.0.0.1:0")
+	p.buttonMenus = map[string]buttonMenu{"nonce": {
+		reply: replyContext{chatID: "555", userID: "99"}, messageID: "prompt",
+		expires: time.Now().Add(time.Minute), actions: []string{"perm:deny"},
+		labels: []string{"Отклонить"},
+	}}
+	var cb maxCallback
+	if err := json.Unmarshal([]byte(`{"payload":"ui:nonce:0","user":{"user_id":99},"buttonLabel":"Allow"}`), &cb); err != nil {
+		t.Fatal(err)
+	}
+	if cb.buttonLabel != "" {
+		t.Fatal("callback supplied an untrusted display label")
+	}
+	cb.Message.Body.Mid = "prompt"
+	if _, action, ok := p.resolveButton(&cb); !ok || action != "perm:deny" || cb.buttonLabel != "Отклонить" {
+		t.Fatalf("localized decision lost its binding: action=%q label=%q valid=%v", action, cb.buttonLabel, ok)
+	}
+}
+
 func TestNewDecisionMenuInvalidatesOldPrompt(t *testing.T) {
 	var payloads []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

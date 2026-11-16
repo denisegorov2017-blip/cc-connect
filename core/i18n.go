@@ -185,6 +185,53 @@ func (i *I18n) SetLang(lang Language) {
 type MsgKey string
 
 const (
+	MsgModeSuggestName    MsgKey = "mode_suggest_name"
+	MsgModeSuggestDesc    MsgKey = "mode_suggest_desc"
+	MsgModeAutoEditName   MsgKey = "mode_auto_edit_name"
+	MsgModeAutoEditDesc   MsgKey = "mode_auto_edit_desc"
+	MsgModeFullAutoName   MsgKey = "mode_full_auto_name"
+	MsgModeFullAutoDesc   MsgKey = "mode_full_auto_desc"
+	MsgModeYoloName       MsgKey = "mode_yolo_name"
+	MsgModeYoloDesc       MsgKey = "mode_yolo_desc"
+	MsgHeartbeatBtnResume MsgKey = "heartbeat_btn_resume"
+	MsgHeartbeatBtnPause  MsgKey = "heartbeat_btn_pause"
+	MsgHeartbeatBtnRun    MsgKey = "heartbeat_btn_run"
+	MsgLanguageAuto       MsgKey = "language_auto"
+	MsgModeCurrentSuffix  MsgKey = "mode_current_suffix"
+	MsgModeUpdatedLive    MsgKey = "mode_updated_live"
+	MsgFooterEffort       MsgKey = "footer_effort"
+	MsgFooterOutput       MsgKey = "footer_output"
+	MsgFooterInput        MsgKey = "footer_input"
+	MsgFooterContext      MsgKey = "footer_context"
+)
+
+func (i *I18n) permissionModeLabels(mode PermissionModeInfo) (string, string) {
+	name, description := mode.Name, mode.Desc
+	if i.IsZhLike() {
+		name, description = mode.NameZh, mode.DescZh
+	}
+	if mode.NameKey != "" {
+		name = i.T(mode.NameKey)
+	}
+	if mode.DescKey != "" {
+		description = i.T(mode.DescKey)
+	}
+	return name, description
+}
+
+func (i *I18n) permissionModeName(key string, modes []PermissionModeInfo) string {
+	if i.CurrentLang() == LangRussian {
+		for _, mode := range modes {
+			if mode.Key == key && mode.NameKey != "" {
+				name, _ := i.permissionModeLabels(mode)
+				return name
+			}
+		}
+	}
+	return key
+}
+
+const (
 	MsgStarting                  MsgKey = "starting"
 	MsgThinking                  MsgKey = "thinking"
 	MsgTool                      MsgKey = "tool"
@@ -680,6 +727,24 @@ const (
 )
 
 var messages = map[MsgKey]map[Language]string{
+	MsgModeSuggestName:    {LangEnglish: "Suggest", LangChinese: "建议", LangTraditionalChinese: "建議", LangJapanese: "提案", LangSpanish: "Sugerir"},
+	MsgModeSuggestDesc:    {LangEnglish: "Read-only sandbox; on exec backend no prompts, on app_server backend asks for every tool call", LangChinese: "只读沙箱；exec 不弹审批，app_server 每次工具调用询问", LangTraditionalChinese: "唯讀沙箱；exec 不顯示核准提示，app_server 每次工具呼叫詢問", LangJapanese: "読み取り専用。exec は承認なし、app_server はツールごとに承認を要求", LangSpanish: "Solo lectura; exec sin avisos, app_server pide permiso para cada herramienta"},
+	MsgModeAutoEditName:   {LangEnglish: "Auto Edit", LangChinese: "自动编辑", LangTraditionalChinese: "自動編輯", LangJapanese: "自動編集", LangSpanish: "Edición automática"},
+	MsgModeAutoEditDesc:   {LangEnglish: "Workspace-write sandbox, no approval prompts (alias of Full Auto)", LangChinese: "工作区可写，不弹审批（等同于全自动）", LangTraditionalChinese: "工作區可寫，不顯示核准提示（等同全自動）", LangJapanese: "作業領域に書き込み可能、承認なし（全自動と同じ）", LangSpanish: "Escritura en el proyecto, sin avisos (igual que Full Auto)"},
+	MsgModeFullAutoName:   {LangEnglish: "Full Auto", LangChinese: "全自动", LangTraditionalChinese: "全自動", LangJapanese: "全自動", LangSpanish: "Totalmente automático"},
+	MsgModeFullAutoDesc:   {LangEnglish: "Workspace-write sandbox, no approval prompts", LangChinese: "工作区可写，不弹审批", LangTraditionalChinese: "工作區可寫，不顯示核准提示", LangJapanese: "作業領域に書き込み可能、承認なし", LangSpanish: "Escritura en el proyecto, sin avisos de aprobación"},
+	MsgModeYoloName:       {LangEnglish: "YOLO", LangChinese: "YOLO 模式", LangTraditionalChinese: "YOLO 模式", LangJapanese: "YOLO", LangSpanish: "YOLO"},
+	MsgModeYoloDesc:       {LangEnglish: "Bypass all approvals and sandbox (DANGEROUS)", LangChinese: "跳过所有审批和沙箱（危险）", LangTraditionalChinese: "跳過所有核准與沙箱（危險）", LangJapanese: "すべての承認とサンドボックスを無効化（危険）", LangSpanish: "Omite permisos y aislamiento (PELIGROSO)"},
+	MsgHeartbeatBtnResume: {LangEnglish: "▶️ Resume", LangChinese: "▶️ 恢复", LangTraditionalChinese: "▶️ 恢復", LangJapanese: "▶️ 再開", LangSpanish: "▶️ Reanudar"},
+	MsgHeartbeatBtnPause:  {LangEnglish: "⏸ Pause", LangChinese: "⏸ 暂停", LangTraditionalChinese: "⏸ 暫停", LangJapanese: "⏸ 一時停止", LangSpanish: "⏸ Pausar"},
+	MsgHeartbeatBtnRun:    {LangEnglish: "💓 Run Now", LangChinese: "💓 立即运行", LangTraditionalChinese: "💓 立即執行", LangJapanese: "💓 今すぐ実行", LangSpanish: "💓 Ejecutar ahora"},
+	MsgLanguageAuto:       {LangEnglish: "Auto", LangChinese: "自动", LangTraditionalChinese: "自動", LangJapanese: "自動", LangSpanish: "Automático"},
+	MsgModeCurrentSuffix:  {LangEnglish: " (current)", LangChinese: "（当前）", LangTraditionalChinese: "（目前）", LangJapanese: "（現在）", LangSpanish: " (actual)"},
+	MsgModeUpdatedLive:    {LangEnglish: "\n\n(Current session updated immediately.)", LangChinese: "\n\n（当前会话已更新。）", LangTraditionalChinese: "\n\n（目前工作階段已更新。）", LangJapanese: "\n\n（現在のセッションに適用しました。）", LangSpanish: "\n\n(La sesión actual se ha actualizado.)"},
+	MsgFooterEffort:       {LangEnglish: "effort:%s", LangChinese: "推理:%s", LangTraditionalChinese: "推理:%s", LangJapanese: "推論:%s", LangSpanish: "esfuerzo:%s"},
+	MsgFooterOutput:       {LangEnglish: "out %s", LangChinese: "输出 %s", LangTraditionalChinese: "輸出 %s", LangJapanese: "出力 %s", LangSpanish: "salida %s"},
+	MsgFooterInput:        {LangEnglish: "in %s cw %s cr %s", LangChinese: "输入 %s 缓存写 %s 读 %s", LangTraditionalChinese: "輸入 %s 快取寫 %s 讀 %s", LangJapanese: "入力 %s キャッシュ書込 %s 読込 %s", LangSpanish: "entrada %s caché escritura %s lectura %s"},
+	MsgFooterContext:      {LangEnglish: "ctx %d%%", LangChinese: "上下文 %d%%", LangTraditionalChinese: "上下文 %d%%", LangJapanese: "コンテキスト %d%%", LangSpanish: "contexto %d%%"},
 	MsgStarting: {
 		LangEnglish:            "⏳ Processing...",
 		LangChinese:            "⏳ 处理中...",

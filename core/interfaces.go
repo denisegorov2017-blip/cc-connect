@@ -662,11 +662,13 @@ type StartupWarner interface {
 
 // PermissionModeInfo describes a permission mode for display.
 type PermissionModeInfo struct {
-	Key    string
-	Name   string
-	NameZh string
-	Desc   string
-	DescZh string
+	Key     string
+	Name    string
+	NameZh  string
+	Desc    string
+	DescZh  string
+	NameKey MsgKey // Optional localized display name; Key remains the command value.
+	DescKey MsgKey // Optional localized description.
 }
 
 // BotCommandInfo represents a command for bot menu registration (e.g. Telegram setMyCommands).
