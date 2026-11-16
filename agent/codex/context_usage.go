@@ -21,6 +21,7 @@ type codexTokenUsage struct {
 	TotalTokens           int `json:"totalTokens"`
 	InputTokens           int `json:"inputTokens"`
 	CachedInputTokens     int `json:"cachedInputTokens"`
+	CacheWriteInputTokens int `json:"cacheWriteInputTokens"`
 	OutputTokens          int `json:"outputTokens"`
 	ReasoningOutputTokens int `json:"reasoningOutputTokens"`
 }
@@ -29,6 +30,7 @@ type codexSnakeTokenUsage struct {
 	TotalTokens           int `json:"total_tokens"`
 	InputTokens           int `json:"input_tokens"`
 	CachedInputTokens     int `json:"cached_input_tokens"`
+	CacheWriteInputTokens int `json:"cache_write_input_tokens"`
 	OutputTokens          int `json:"output_tokens"`
 	ReasoningOutputTokens int `json:"reasoning_output_tokens"`
 }
@@ -44,7 +46,15 @@ type appServerThreadTokenUsageNotification struct {
 }
 
 func mapAppServerTokenUsage(notif appServerThreadTokenUsageNotification) *core.ContextUsage {
-	return contextUsageFromCamel(notif.TokenUsage.Last, notif.TokenUsage.ModelContextWindow)
+	usage := contextUsageFromCamel(notif.TokenUsage.Last, notif.TokenUsage.ModelContextWindow)
+	if usage == nil && (tokenCounts(notif.TokenUsage.Total) != nil || tokenCounts(notif.TokenUsage.Last) != nil) {
+		usage = &core.ContextUsage{}
+	}
+	if usage != nil {
+		usage.Tokens = &core.TokenUsageSnapshot{ThreadID: notif.ThreadID, TurnID: notif.TurnID, LastRequest: tokenCounts(notif.TokenUsage.Last), Session: tokenCounts(notif.TokenUsage.Total)}
+		usage.CacheCreationInputTokens = notif.TokenUsage.Last.CacheWriteInputTokens
+	}
+	return usage
 }
 
 func contextUsageFromCamel(usage codexTokenUsage, contextWindow int) *core.ContextUsage {
@@ -105,6 +115,10 @@ func cloneContextUsage(usage *core.ContextUsage) *core.ContextUsage {
 		return nil
 	}
 	cloned := *usage
+	if usage.Tokens != nil {
+		tokens := usage.Tokens.Clone()
+		cloned.Tokens = &tokens
+	}
 	return &cloned
 }
 
@@ -287,5 +301,16 @@ func parseContextUsageFromRolloutLine(line []byte) *core.ContextUsage {
 	if payload.Type != "token_count" || payload.Info == nil {
 		return nil
 	}
-	return contextUsageFromSnake(payload.Info.LastTokenUsage, payload.Info.ModelContextWindow)
+	usage := contextUsageFromSnake(payload.Info.LastTokenUsage, payload.Info.ModelContextWindow)
+	if usage == nil && payload.Info.TotalTokenUsage.TotalTokens > 0 {
+		usage = &core.ContextUsage{}
+	}
+	if usage != nil {
+		convert := func(u codexSnakeTokenUsage) *core.TokenCounts {
+			return tokenCounts(codexTokenUsage{InputTokens: u.InputTokens, CachedInputTokens: u.CachedInputTokens, CacheWriteInputTokens: u.CacheWriteInputTokens, OutputTokens: u.OutputTokens, ReasoningOutputTokens: u.ReasoningOutputTokens, TotalTokens: u.TotalTokens})
+		}
+		usage.Tokens = &core.TokenUsageSnapshot{LastRequest: convert(payload.Info.LastTokenUsage), Session: convert(payload.Info.TotalTokenUsage)}
+		usage.CacheCreationInputTokens = payload.Info.LastTokenUsage.CacheWriteInputTokens
+	}
+	return usage
 }

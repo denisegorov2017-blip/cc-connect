@@ -184,6 +184,7 @@ type appServerSession struct {
 	streamedText map[string]string
 	currentTurn  string
 	preambleSent bool
+	tokenMeter   appServerTokenMeter
 
 	runtimeMu sync.RWMutex
 	usage     *core.UsageReport
@@ -233,6 +234,19 @@ func newAppServerSession(ctx context.Context, url, workDir, model, effort, mode,
 	if err := s.ensureThread(resumeID); err != nil {
 		_ = s.Close()
 		return nil, err
+	}
+	if resumeID != "" && resumeID != core.ContinueSession {
+		env := append([]string(nil), s.extraEnv...)
+		if s.codexHome != "" {
+			env = append(env, "CODEX_HOME="+s.codexHome)
+		}
+		if usage, _, err := loadContextUsageFromRollout(env, s.CurrentSessionID(), ""); err == nil && usage != nil && usage.Tokens != nil {
+			s.stateMu.Lock()
+			if s.tokenMeter.total == nil {
+				s.tokenMeter.total = copyTokenCounts(usage.Tokens.Session)
+			}
+			s.stateMu.Unlock()
+		}
 	}
 	if err := s.refreshUsage(context.Background()); err != nil {
 		slog.Debug("codex app-server: initial rate limit fetch failed", "error", err)
@@ -515,6 +529,7 @@ func (s *appServerSession) Send(prompt string, messageID string, images []core.I
 
 	s.stateMu.Lock()
 	s.currentTurn = resp.Turn.ID
+	s.tokenMeter.begin(resp.Turn.ID)
 	s.pendingMsgs = s.pendingMsgs[:0]
 	s.stateMu.Unlock()
 
@@ -1129,6 +1144,7 @@ func (s *appServerSession) handleNotification(method string, paramsRaw json.RawM
 		if err := json.Unmarshal(paramsRaw, &notif); err == nil {
 			s.stateMu.Lock()
 			s.currentTurn = notif.Turn.ID
+			s.tokenMeter.begin(notif.Turn.ID)
 			s.pendingMsgs = s.pendingMsgs[:0]
 			s.streamedText = make(map[string]string)
 			s.stateMu.Unlock()
@@ -1216,6 +1232,15 @@ func (s *appServerSession) handleNotification(method string, paramsRaw json.RawM
 	case "thread/tokenUsage/updated":
 		var notif appServerThreadTokenUsageNotification
 		if err := json.Unmarshal(paramsRaw, &notif); err == nil {
+			s.stateMu.Lock()
+			stale := s.currentTurn != "" && notif.TurnID != "" && notif.TurnID != s.currentTurn
+			if !stale {
+				s.tokenMeter.observe(notif)
+			}
+			s.stateMu.Unlock()
+			if stale {
+				return
+			}
 			s.storeContextUsage(mapAppServerTokenUsage(notif))
 		}
 
@@ -1606,9 +1631,16 @@ func (s *appServerSession) completeTurn() {
 		return
 	}
 	s.currentTurn = ""
+	last := copyTokenCounts(s.tokenMeter.last)
+	turnUsage, sessionUsage := copyTokenCounts(s.tokenMeter.turn), copyTokenCounts(s.tokenMeter.total)
 	s.stateMu.Unlock()
 	s.flushPendingAsText()
-	s.emit(core.Event{Type: core.EventResult, SessionID: s.CurrentSessionID(), Done: true})
+	event := core.Event{Type: core.EventResult, SessionID: s.CurrentSessionID(), Done: true, Metadata: map[string]any{"token_usage_reported": last != nil, "turn_token_usage": turnUsage, "session_token_usage": sessionUsage}}
+	if last != nil {
+		event.InputTokens, event.OutputTokens = last.InputTokens, last.OutputTokens
+		event.CacheReadInputTokens, event.CacheCreationInputTokens = last.CachedInputTokens, last.CacheWriteInputTokens
+	}
+	s.emit(event)
 }
 
 func (s *appServerSession) flushPendingAsThinking() {
