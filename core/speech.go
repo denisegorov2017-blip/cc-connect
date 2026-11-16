@@ -21,6 +21,13 @@ type SpeechToText interface {
 	Transcribe(ctx context.Context, audio []byte, format string, lang string) (string, error)
 }
 
+// SpeechTimeBudget optionally limits the whole conversion/recognition pipeline.
+type SpeechTimeBudget interface {
+	TranscriptionTimeout() time.Duration
+}
+
+const maxSpeechAudioBytes = 25 * 1024 * 1024
+
 // SpeechConfig holds STT configuration for the engine.
 type SpeechCfg struct {
 	Enabled  bool
@@ -328,13 +335,22 @@ func ConvertAudioToMP3(ctx context.Context, audio []byte, srcFormat string) ([]b
 		)
 	}
 
+	configureSpeechCommand(cmd)
+	cmd.WaitDelay = time.Second
 	cmd.Stdin = bytes.NewReader(audio)
-	var stdout, stderr bytes.Buffer
+	stdout := speechOutput{limit: maxSpeechAudioBytes}
 	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cmd.Stderr = io.Discard
 
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("ffmpeg conversion failed: %w (stderr: %s)", err, stderr.String())
+	err = cmd.Run()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("ffmpeg conversion failed: %w", ctx.Err())
+	}
+	if stdout.exceeded {
+		return nil, fmt.Errorf("converted speech audio exceeds size limit")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("ffmpeg conversion failed: %w", err)
 	}
 	return stdout.Bytes(), nil
 }
@@ -375,8 +391,8 @@ func ConvertAudioToAMR(ctx context.Context, audio []byte, srcFormat string) ([]b
 	args := []string{
 		"-i", "pipe:0",
 		"-c:a", "amr_nb",
-		"-ar", "8000",   // 8kHz sample rate (AMR-NB standard)
-		"-ac", "1",      // mono
+		"-ar", "8000", // 8kHz sample rate (AMR-NB standard)
+		"-ac", "1", // mono
 		"-b:a", "12.2k", // 12.2 kbps bitrate (AMR-NB max)
 		"-f", "amr",
 		"-y",
@@ -408,9 +424,9 @@ func ConvertMP3ToOGG(ctx context.Context, mp3Data []byte) ([]byte, error) {
 	args := []string{
 		"-i", "pipe:0",
 		"-c:a", "libopus",
-		"-ar", "16000",       // 16kHz sample rate for voice
-		"-ac", "1",           // mono
-		"-b:a", "32k",        // 32 kbps bitrate (voice quality)
+		"-ar", "16000", // 16kHz sample rate for voice
+		"-ac", "1", // mono
+		"-b:a", "32k", // 32 kbps bitrate (voice quality)
 		"-application", "voip", // optimize for voice
 		"-f", "ogg",
 		"-y",
@@ -439,9 +455,9 @@ func ConvertMP3ToAMR(ctx context.Context, mp3Data []byte) ([]byte, error) {
 	args := []string{
 		"-i", "pipe:0",
 		"-c:a", "amr_nb",
-		"-ar", "8000",     // 8kHz sample rate (AMR-NB standard)
-		"-ac", "1",        // mono
-		"-b:a", "12.2k",   // 12.2 kbps bitrate (AMR-NB max)
+		"-ar", "8000", // 8kHz sample rate (AMR-NB standard)
+		"-ac", "1", // mono
+		"-b:a", "12.2k", // 12.2 kbps bitrate (AMR-NB max)
 		"-f", "amr",
 		"-y",
 		"pipe:1",
@@ -515,6 +531,11 @@ func formatToAudioMIME(format string) string {
 // TranscribeAudio is a convenience function used by the Engine.
 // It handles format conversion (if needed) and calls the STT provider.
 func TranscribeAudio(ctx context.Context, stt SpeechToText, audio *AudioAttachment, lang string) (string, error) {
+	if limiter, ok := stt.(SpeechTimeBudget); ok && limiter.TranscriptionTimeout() > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, limiter.TranscriptionTimeout())
+		defer cancel()
+	}
 	data := audio.Data
 	format := strings.ToLower(audio.Format)
 

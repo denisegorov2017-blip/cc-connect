@@ -35,24 +35,33 @@ func NewCommandSTT(command []string, timeout time.Duration) *CommandSTT {
 	return &CommandSTT{command: append([]string(nil), command...), timeout: timeout, slots: make(chan struct{}, 1)}
 }
 
+func (s *CommandSTT) TranscriptionTimeout() time.Duration { return s.timeout }
+
 type speechOutput struct {
-	bytes.Buffer
+	data     bytes.Buffer
 	exceeded bool
+	limit    int
 }
 
+func (b *speechOutput) Bytes() []byte { return b.data.Bytes() }
+
 func (b *speechOutput) Write(p []byte) (int, error) {
-	if len(p) > maxCommandSpeechOutput-b.Len() {
-		b.exceeded = true
-		return 0, errors.New("speech command output limit exceeded")
+	limit := b.limit
+	if limit == 0 {
+		limit = maxCommandSpeechOutput
 	}
-	return b.Buffer.Write(p)
+	if len(p) > limit-b.data.Len() {
+		b.exceeded = true
+		return 0, errors.New("speech output limit exceeded")
+	}
+	return b.data.Write(p)
 }
 
 func (s *CommandSTT) Transcribe(ctx context.Context, audio []byte, format, lang string) (string, error) {
 	if len(s.command) == 0 || strings.TrimSpace(s.command[0]) == "" {
 		return "", errors.New("speech command is not configured")
 	}
-	if len(audio) == 0 || len(audio) > 25*1024*1024 {
+	if len(audio) == 0 || len(audio) > maxSpeechAudioBytes {
 		return "", errors.New("speech command audio size is invalid")
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)

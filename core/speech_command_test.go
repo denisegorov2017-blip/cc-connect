@@ -41,7 +41,7 @@ func TestCommandSTTChildProcess(t *testing.T) {
 	case "invalid":
 		_, _ = fmt.Fprint(os.Stdout, `{"transcript":"wrong contract"}`)
 	case "oversize":
-		_, _ = fmt.Fprint(os.Stdout, strings.Repeat("x", maxCommandSpeechOutput+1))
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]string{"text": strings.Repeat("x", maxCommandSpeechOutput+1)})
 	case "hang":
 		time.Sleep(30 * time.Second)
 	}
@@ -62,7 +62,7 @@ func TestCommandSTT_FailuresAreBoundedAndDoNotLeakStderr(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			text, err := NewCommandSTT(speechTestCommand(t, mode), 5*time.Second).Transcribe(context.Background(), []byte("audio"), "mp3", "ru")
 			if err == nil || text != "" || strings.Contains(err.Error(), "PRIVATE") {
-				t.Fatalf("text=%q err=%v", text, err)
+				t.Fatalf("text_bytes=%d err=%v", len(text), err)
 			}
 		})
 	}

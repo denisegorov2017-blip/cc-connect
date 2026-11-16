@@ -22,7 +22,7 @@ with a string `text` property, for example `{"text":"recognized speech"}`. An
 empty string follows the existing "no speech recognized" path. Use a nonzero
 exit status on failure. Stderr is discarded and never reflected to the chat.
 
-One command runs at a time per provider instance. Waiting and execution share
+One command runs at a time per provider instance. Conversion, waiting and execution share
 the configured timeout: default 45 seconds, maximum 120 seconds. The direct
 child is terminated on timeout/cancellation; trusted commands must manage any
 descendants they create. Input is limited to 25 MiB and stdout to 1 MiB. These
